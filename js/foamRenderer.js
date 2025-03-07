@@ -21,6 +21,7 @@ class FoamRenderer {
         this.foamLines = null;         // Voronoi edges
         this.flowParticles = null;     // Flow particles
         this.delaunayLines = null;     // Delaunay edges
+        this.acuteCorners = null;      // Markers for acute angles
         
         // Materials
         this.triangleMaterial = null;
@@ -34,6 +35,7 @@ class FoamRenderer {
         this.foamLineColor = new THREE.Color(0x2288ff);
         this.flowParticleColor = new THREE.Color(0xff8822);
         this.delaunayLineColor = new THREE.Color(0x7a7a7a);
+        this.acuteCornerColor = new THREE.Color(0xff0000);
         
         // Initialize
         this.init();
@@ -115,12 +117,16 @@ class FoamRenderer {
         if (this.foamLines) this.scene.remove(this.foamLines);
         if (this.flowParticles) this.scene.remove(this.flowParticles);
         if (this.delaunayLines) this.scene.remove(this.delaunayLines);
+        if (this.acuteCorners) this.scene.remove(this.acuteCorners);
         
         // Create delaunay edges visualization
         this.createDelaunayEdges(foamData.points, foamData.delaunayEdges);
         
         // Create foam edges (Voronoi)
         this.createFoamEdges(foamData.centers, foamData.edges);
+        
+        // Create acute angle markers
+        this.createAcuteCorners(foamData.centers, foamData.edges);
         
         // Create flow particles
         this.createFlowParticles(foamData.centers, foamData.edges, foamData.flows);
@@ -232,88 +238,66 @@ class FoamRenderer {
     }
     
     /**
-     * Create visualization of flow particles
+     * Create flow particles visualization
      */
     createFlowParticles(centers, edges, flows) {
         // Remove old particles if they exist
-        if (this.flowParticles) this.scene.remove(this.flowParticles);
+        if (this.flowParticles) {
+            this.scene.remove(this.flowParticles);
+            this.flowParticles = null;
+        }
         
-        if (flows.length === 0) {
+        if (!flows || flows.length === 0) {
             console.log("No flow particles to visualize");
             return;
         }
         
-        console.log(`Creating visualization for ${flows.length} particles`);
-        
+        // Create a geometry for the particles
         const geometry = new THREE.BufferGeometry();
-        
-        // Create particles at flow positions
         const vertices = [];
-        const colors = [];
-        const particleColor = new THREE.Color();
         
         for (const flow of flows) {
-            if (flow.edge >= edges.length) {
-                console.warn(`Invalid edge index: ${flow.edge}, max: ${edges.length-1}`);
+            if (flow.edgeIndex < 0 || flow.edgeIndex >= edges.length) {
+                console.error(`Invalid edge index: ${flow.edgeIndex}`);
                 continue;
             }
             
-            const edge = edges[flow.edge];
-            if (!edge || edge.from >= centers.length || edge.to >= centers.length) {
-                console.warn(`Invalid center indices in edge: ${edge?.from}, ${edge?.to}, max: ${centers.length-1}`);
+            const edge = edges[flow.edgeIndex];
+            const centerFrom = centers[edge.from];
+            const centerTo = centers[edge.to];
+            
+            if (!centerFrom || !centerTo) {
+                console.error(`Invalid center reference: from=${edge.from}, to=${edge.to}`);
                 continue;
             }
             
-            const from = centers[edge.from];
-            const to = centers[edge.to];
+            // Calculate position along the edge
+            const x = centerFrom[0] + flow.t * (centerTo[0] - centerFrom[0]);
+            const y = centerFrom[1] + flow.t * (centerTo[1] - centerFrom[1]);
             
-            if (!from || !to) {
-                console.warn(`Null center: from=${from}, to=${to}`);
-                continue;
-            }
-            
-            // Interpolate position along edge
-            const x = from[0] + (to[0] - from[0]) * flow.position;
-            const y = from[1] + (to[1] - from[1]) * flow.position;
-            
-            vertices.push(x, y, 1); // Slight z-offset to render above lines
-            
-            // Color based on velocity - brighter colors
-            const velocityFactor = Math.min(1, Math.abs(flow.velocity) / 2);
-            particleColor.setRGB(
-                this.flowParticleColor.r * (1 - velocityFactor) + velocityFactor,
-                this.flowParticleColor.g * (1 - velocityFactor),
-                this.flowParticleColor.b * (1 - velocityFactor)
-            );
-            
-            colors.push(particleColor.r, particleColor.g, particleColor.b);
-        }
-        
-        if (vertices.length === 0) {
-            console.warn("No valid particles to render");
-            return;
+            // Use a higher z-offset to ensure particles render on top
+            vertices.push(x, y, 3);
         }
         
         geometry.setAttribute('position', new THREE.Float32BufferAttribute(vertices, 3));
-        geometry.setAttribute('color', new THREE.Float32BufferAttribute(colors, 3));
         
-        // Update particle material to use vertex colors
-        const material = new THREE.PointsMaterial({
-            color: 0xffffff,
-            size: 8,
+        // Create a material for the particles
+        this.particleMaterial = new THREE.PointsMaterial({
+            color: new THREE.Color(0xffffff), // Pure white color
+            size: 15, // Larger size for better visibility
             sizeAttenuation: true,
-            vertexColors: true,
             transparent: true,
-            opacity: 0.9,
+            opacity: 1.0, // Fully opaque
             map: this.createParticleTexture()
         });
         
-        this.flowParticles = new THREE.Points(geometry, material);
+        this.flowParticles = new THREE.Points(geometry, this.particleMaterial);
         this.scene.add(this.flowParticles);
+        console.log(`Created ${flows.length} flow particles and added to scene`);
     }
     
     /**
-     * Create a circular particle texture with a soft edge
+     * Create a circular particle texture with soft edge
      */
     createParticleTexture() {
         const canvas = document.createElement('canvas');
@@ -323,21 +307,30 @@ class FoamRenderer {
         const context = canvas.getContext('2d');
         const centerX = canvas.width / 2;
         const centerY = canvas.height / 2;
-        const radius = canvas.width / 3;
+        const radius = canvas.width / 2.5;
+        
+        // Clear canvas
+        context.clearRect(0, 0, canvas.width, canvas.height);
         
         // Create radial gradient
         const gradient = context.createRadialGradient(
             centerX, centerY, 0,
             centerX, centerY, radius
         );
-        gradient.addColorStop(0, 'rgba(255, 255, 255, 1)');
-        gradient.addColorStop(0.5, 'rgba(255, 255, 255, 0.8)');
-        gradient.addColorStop(1, 'rgba(255, 255, 255, 0)');
+        gradient.addColorStop(0, 'rgba(255, 255, 255, 1.0)'); // White center
+        gradient.addColorStop(0.7, 'rgba(255, 255, 255, 0.8)');
+        gradient.addColorStop(1, 'rgba(255, 255, 255, 0)'); // Fade to transparent
         
         // Draw circle
         context.fillStyle = gradient;
         context.beginPath();
         context.arc(centerX, centerY, radius, 0, Math.PI * 2, false);
+        context.fill();
+        
+        // Draw a bright center point
+        context.fillStyle = 'rgba(255, 255, 255, 1.0)';
+        context.beginPath();
+        context.arc(centerX, centerY, radius / 4, 0, Math.PI * 2, false);
         context.fill();
         
         // Create texture
@@ -347,63 +340,50 @@ class FoamRenderer {
     }
     
     /**
-     * Update flow particle positions
+     * Update flow particles positions based on flows
      */
     updateFlowParticles(centers, edges, flows) {
-        if (!this.flowParticles || flows.length === 0) {
-            // Recreate particles if they don't exist or if flows array changed size
+        // If there are no particles or the number of flows has changed, recreate them
+        if (!this.flowParticles || !flows || 
+            (this.flowParticles.geometry.attributes.position.count !== flows.length)) {
             this.createFlowParticles(centers, edges, flows);
             return;
         }
         
-        // Check if the particle count has changed
-        if (this.flowParticles.geometry.attributes.position.count !== flows.length) {
-            // Recreate the particles with the new count
-            this.createFlowParticles(centers, edges, flows);
-            return;
+        if (flows.length === 0) {
+            return; // No particles to update
         }
         
         const positions = this.flowParticles.geometry.attributes.position.array;
-        const colors = this.flowParticles.geometry.attributes.color.array;
-        const particleColor = new THREE.Color();
         
-        // Update each particle's position
         for (let i = 0; i < flows.length; i++) {
             const flow = flows[i];
             
-            // Safety checks
-            if (flow.edge >= edges.length) continue;
+            if (flow.edgeIndex < 0 || flow.edgeIndex >= edges.length) {
+                console.warn(`Invalid edge index: ${flow.edgeIndex}`);
+                continue;
+            }
             
-            const edge = edges[flow.edge];
-            if (!edge || edge.from >= centers.length || edge.to >= centers.length) continue;
+            const edge = edges[flow.edgeIndex];
+            const centerFrom = centers[edge.from];
+            const centerTo = centers[edge.to];
             
-            const from = centers[edge.from];
-            const to = centers[edge.to];
-            if (!from || !to) continue;
+            if (!centerFrom || !centerTo) {
+                console.warn(`Invalid center reference: from=${edge.from}, to=${edge.to}`);
+                continue;
+            }
+            
+            // Calculate position along edge
+            const x = centerFrom[0] + flow.t * (centerTo[0] - centerFrom[0]);
+            const y = centerFrom[1] + flow.t * (centerTo[1] - centerFrom[1]);
             
             // Update position
-            const x = from[0] + (to[0] - from[0]) * flow.position;
-            const y = from[1] + (to[1] - from[1]) * flow.position;
-            
             positions[i * 3] = x;
             positions[i * 3 + 1] = y;
-            positions[i * 3 + 2] = 1; // Keep z-offset
-            
-            // Update color based on velocity
-            const velocityFactor = Math.min(1, Math.abs(flow.velocity) / 2);
-            particleColor.setRGB(
-                this.flowParticleColor.r * (1 - velocityFactor) + velocityFactor,
-                this.flowParticleColor.g * (1 - velocityFactor),
-                this.flowParticleColor.b * (1 - velocityFactor)
-            );
-            
-            colors[i * 3] = particleColor.r;
-            colors[i * 3 + 1] = particleColor.g;
-            colors[i * 3 + 2] = particleColor.b;
+            positions[i * 3 + 2] = 3; // Keep z-offset consistent
         }
         
         this.flowParticles.geometry.attributes.position.needsUpdate = true;
-        this.flowParticles.geometry.attributes.color.needsUpdate = true;
     }
     
     /**
@@ -481,6 +461,179 @@ class FoamRenderer {
     }
     
     /**
+     * Create markers for acute angle corners
+     */
+    createAcuteCorners(centers, edges) {
+        // Remove old markers if they exist
+        if (this.acuteCorners) {
+            this.scene.remove(this.acuteCorners);
+            this.acuteCorners = null;
+        }
+        
+        // Find vertices with acute angles
+        const acuteVertices = this.findAcuteAngleVertices(centers, edges);
+        
+        if (acuteVertices.length === 0) {
+            console.log("No acute angle vertices found");
+            return;
+        }
+        
+        console.log(`Found ${acuteVertices.length} acute angle vertices`);
+        
+        // Create a geometry for the markers
+        const geometry = new THREE.BufferGeometry();
+        const vertices = [];
+        
+        for (const vertex of acuteVertices) {
+            vertices.push(vertex.x, vertex.y, 2); // Same z-offset as particles
+        }
+        
+        geometry.setAttribute('position', new THREE.Float32BufferAttribute(vertices, 3));
+        
+        // Create a material for the markers (red)
+        const material = new THREE.PointsMaterial({
+            color: this.acuteCornerColor,
+            size: 15,
+            sizeAttenuation: true,
+            transparent: true,
+            opacity: 0.8,
+            map: this.createCornerTexture()
+        });
+        
+        this.acuteCorners = new THREE.Points(geometry, material);
+        this.scene.add(this.acuteCorners);
+    }
+    
+    /**
+     * Create a different texture for corner markers (X shape)
+     */
+    createCornerTexture() {
+        const canvas = document.createElement('canvas');
+        canvas.width = 64;
+        canvas.height = 64;
+        
+        const context = canvas.getContext('2d');
+        const centerX = canvas.width / 2;
+        const centerY = canvas.height / 2;
+        const size = canvas.width / 2.5;
+        
+        // Clear canvas
+        context.clearRect(0, 0, canvas.width, canvas.height);
+        
+        // Draw X shape
+        context.strokeStyle = 'white';
+        context.lineWidth = 4;
+        
+        context.beginPath();
+        context.moveTo(centerX - size, centerY - size);
+        context.lineTo(centerX + size, centerY + size);
+        context.stroke();
+        
+        context.beginPath();
+        context.moveTo(centerX + size, centerY - size);
+        context.lineTo(centerX - size, centerY + size);
+        context.stroke();
+        
+        // Create radial gradient for glow
+        const gradient = context.createRadialGradient(
+            centerX, centerY, 0,
+            centerX, centerY, size
+        );
+        gradient.addColorStop(0, 'rgba(255, 0, 0, 0.8)');
+        gradient.addColorStop(1, 'rgba(255, 0, 0, 0)');
+        
+        // Draw glow
+        context.fillStyle = gradient;
+        context.beginPath();
+        context.arc(centerX, centerY, size, 0, Math.PI * 2, false);
+        context.fill();
+        
+        // Create texture
+        const texture = new THREE.CanvasTexture(canvas);
+        texture.needsUpdate = true;
+        return texture;
+    }
+    
+    /**
+     * Find vertices where adjacent edges form acute angles
+     */
+    findAcuteAngleVertices(centers, edges) {
+        const acuteVertices = [];
+        const vertexMap = new Map(); // Map vertices to their connected edges
+        
+        // Map edges to vertices
+        for (let i = 0; i < edges.length; i++) {
+            const edge = edges[i];
+            
+            // Add edge to 'from' vertex
+            if (!vertexMap.has(edge.from)) {
+                vertexMap.set(edge.from, []);
+            }
+            vertexMap.get(edge.from).push(i);
+            
+            // Add edge to 'to' vertex
+            if (!vertexMap.has(edge.to)) {
+                vertexMap.set(edge.to, []);
+            }
+            vertexMap.get(edge.to).push(i);
+        }
+        
+        // Check all vertices for acute angles
+        for (const [vertexIdx, connectedEdges] of vertexMap.entries()) {
+            // Need at least 2 edges to form an angle
+            if (connectedEdges.length < 2) continue;
+            
+            const vertexPos = centers[vertexIdx];
+            let hasAcuteAngle = false;
+            
+            // Check all pairs of edges
+            for (let i = 0; i < connectedEdges.length; i++) {
+                const edge1 = edges[connectedEdges[i]];
+                const edge1Endpoint = edge1.from === vertexIdx ? edge1.to : edge1.from;
+                const edge1Dir = [
+                    centers[edge1Endpoint][0] - vertexPos[0],
+                    centers[edge1Endpoint][1] - vertexPos[1]
+                ];
+                
+                for (let j = i + 1; j < connectedEdges.length; j++) {
+                    const edge2 = edges[connectedEdges[j]];
+                    const edge2Endpoint = edge2.from === vertexIdx ? edge2.to : edge2.from;
+                    const edge2Dir = [
+                        centers[edge2Endpoint][0] - vertexPos[0],
+                        centers[edge2Endpoint][1] - vertexPos[1]
+                    ];
+                    
+                    // Normalize vectors
+                    const len1 = Math.sqrt(edge1Dir[0] * edge1Dir[0] + edge1Dir[1] * edge1Dir[1]);
+                    const len2 = Math.sqrt(edge2Dir[0] * edge2Dir[0] + edge2Dir[1] * edge2Dir[1]);
+                    
+                    edge1Dir[0] /= len1;
+                    edge1Dir[1] /= len1;
+                    edge2Dir[0] /= len2;
+                    edge2Dir[1] /= len2;
+                    
+                    // Calculate dot product
+                    const dotProduct = edge1Dir[0] * edge2Dir[0] + edge1Dir[1] * edge2Dir[1];
+                    
+                    // Acute angle if dot product > 0 (angle < 90 degrees)
+                    if (dotProduct > 0) {
+                        hasAcuteAngle = true;
+                        break;
+                    }
+                }
+                
+                if (hasAcuteAngle) break;
+            }
+            
+            if (hasAcuteAngle) {
+                acuteVertices.push({ x: vertexPos[0], y: vertexPos[1] });
+            }
+        }
+        
+        return acuteVertices;
+    }
+    
+    /**
      * Render the scene
      */
     render() {
@@ -536,6 +689,43 @@ class FoamRenderer {
         
         if (this.delaunayLines && options.showDelaunayEdges !== undefined) {
             this.delaunayLines.visible = options.showDelaunayEdges;
+        }
+        
+        if (this.acuteCorners && options.showAcuteCorners !== undefined) {
+            this.acuteCorners.visible = options.showAcuteCorners;
+        }
+    }
+    
+    /**
+     * Toggle dark/light mode
+     */
+    setDarkMode(isDarkMode) {
+        if (isDarkMode) {
+            this.backgroundColor = new THREE.Color(0x111111);
+            this.triangleColor = new THREE.Color(0x444444);
+            this.foamLineColor = new THREE.Color(0x2288ff);
+            this.delaunayLineColor = new THREE.Color(0x7a7a7a);
+        } else {
+            this.backgroundColor = new THREE.Color(0xf0f0f0);
+            this.triangleColor = new THREE.Color(0xdddddd);
+            this.foamLineColor = new THREE.Color(0x0066cc);
+            this.delaunayLineColor = new THREE.Color(0x999999);
+        }
+        
+        // Update the background color
+        this.renderer.setClearColor(this.backgroundColor);
+        
+        // Update materials if they exist
+        if (this.triangleMaterial) {
+            this.triangleMaterial.color = this.triangleColor;
+        }
+        
+        if (this.lineMaterial) {
+            this.lineMaterial.color = this.foamLineColor;
+        }
+        
+        if (this.delaunayMaterial) {
+            this.delaunayMaterial.color = this.delaunayLineColor;
         }
     }
 }

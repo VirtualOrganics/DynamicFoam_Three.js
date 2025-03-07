@@ -25,6 +25,8 @@ class UIController {
             showDelaunayEdges: true,     // The backbone of our model
             showFoamEdges: true,         // Voronoi edges
             showFlowParticles: true,     // Flow particles
+            showAcuteCorners: true,
+            darkMode: true,
             
             // Actions
             isRunning: true,
@@ -132,6 +134,18 @@ class UIController {
             .name('Show Flow Particles')
             .onChange(value => {
                 this.renderer.setVisibility({ showFlowParticles: value });
+            });
+        
+        visualizationFolder.add(this.params, 'showAcuteCorners')
+            .name('Show Acute Corners')
+            .onChange(value => {
+                this.renderer.setVisibility({ showAcuteCorners: value });
+            });
+        
+        visualizationFolder.add(this.params, 'darkMode')
+            .name('Dark Mode')
+            .onChange(value => {
+                this.renderer.setDarkMode(value);
             });
         
         // Color controls
