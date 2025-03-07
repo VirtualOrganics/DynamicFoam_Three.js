@@ -27,6 +27,10 @@ class UIController {
             showFlowParticles: true,
             
             // Actions
+            isRunning: true,
+            toggleSimulation: () => {
+                this.params.isRunning = window.app.toggleSimulation();
+            },
             resetSimulation: () => this.resetSimulation()
         };
         
@@ -155,6 +159,8 @@ class UIController {
             });
         
         // Actions
+        actionsFolder.add(this.params, 'toggleSimulation')
+            .name('Pause/Play Simulation');
         actionsFolder.add(this.params, 'resetSimulation').name('Reset Simulation');
         
         // Open folders by default
