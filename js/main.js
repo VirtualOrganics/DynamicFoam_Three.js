@@ -69,7 +69,7 @@ class DynamicFoamApp {
     /**
      * Animation loop
      */
-    animate(time) {
+    animate() {
         requestAnimationFrame(this.animate.bind(this));
         
         if (!this.isRunning) {
@@ -77,31 +77,30 @@ class DynamicFoamApp {
             return;
         }
         
-        // Calculate time delta
-        if (!time) time = 0;
-        const deltaTime = Math.min((time - this.lastTime) / 1000, 0.05); // Cap at 50ms to avoid large jumps
-        this.lastTime = time;
+        // Calculate delta time (in seconds)
+        const currentTime = performance.now() / 1000;
+        const deltaTime = Math.min(0.1, currentTime - this.lastTime); // Cap at 100ms to avoid large jumps
+        this.lastTime = currentTime;
         
-        // Skip if deltaTime is too small
-        if (deltaTime < 0.001) {
-            this.renderer.render();
-            return;
-        }
-        
-        // Update foam simulation
+        // Update the simulation
         this.foam.update(deltaTime);
         
-        // Debug logging every 2 seconds
-        if (Math.floor(time / 2000) !== Math.floor(this.lastLogTime / 2000)) {
-            const foamData = this.foam.getGeometryData();
+        // Get updated geometry data
+        const foamData = this.foam.getGeometryData();
+        
+        // Update the renderer with new data
+        this.renderer.updateFoamData(foamData);
+        
+        // Log active particles every few seconds
+        if (Math.floor(currentTime) % 5 === 0 && Math.floor(currentTime) !== this.lastLogTime) {
+            this.lastLogTime = Math.floor(currentTime);
             console.log(`Active particles: ${foamData.flows.length}`);
-            this.lastLogTime = time;
         }
         
         // Update visualizations
         this.updateVisualizations();
         
-        // Render scene
+        // Render the scene
         this.renderer.render();
     }
     

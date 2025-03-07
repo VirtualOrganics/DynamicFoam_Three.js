@@ -109,15 +109,26 @@ class FoamRenderer {
      * Update scene with new foam data
      */
     updateFoamData(foamData) {
-        // Remove previous objects
+        // Store current particle visibility state
+        const particlesVisible = this.flowParticles ? this.flowParticles.visible : true;
+        
+        // Remove previous objects except particles
         if (this.triangles) {
             this.scene.remove(this.triangles);
-            this.triangles = null; // Set to null to ensure it's not referenced
+            this.triangles = null;
         }
-        if (this.foamLines) this.scene.remove(this.foamLines);
-        if (this.flowParticles) this.scene.remove(this.flowParticles);
-        if (this.delaunayLines) this.scene.remove(this.delaunayLines);
-        if (this.acuteCorners) this.scene.remove(this.acuteCorners);
+        if (this.foamLines) {
+            this.scene.remove(this.foamLines);
+            this.foamLines = null;
+        }
+        if (this.delaunayLines) {
+            this.scene.remove(this.delaunayLines);
+            this.delaunayLines = null;
+        }
+        if (this.acuteCorners) {
+            this.scene.remove(this.acuteCorners);
+            this.acuteCorners = null;
+        }
         
         // Create delaunay edges visualization
         this.createDelaunayEdges(foamData.points, foamData.delaunayEdges);
@@ -128,8 +139,13 @@ class FoamRenderer {
         // Create acute angle markers
         this.createAcuteCorners(foamData.centers, foamData.edges);
         
-        // Create flow particles
-        this.createFlowParticles(foamData.centers, foamData.edges, foamData.flows);
+        // Update flow particles (don't recreate unless necessary)
+        this.updateFlowParticles(foamData.centers, foamData.edges, foamData.flows);
+        
+        // Restore particle visibility
+        if (this.flowParticles) {
+            this.flowParticles.visible = particlesVisible;
+        }
     }
     
     /**
@@ -252,39 +268,59 @@ class FoamRenderer {
             return;
         }
         
+        console.log(`Creating flow particles for ${flows.length} particles`);
+        
         // Create a geometry for the particles
         const geometry = new THREE.BufferGeometry();
         const vertices = [];
+        let validParticleCount = 0;
         
         for (const flow of flows) {
-            if (flow.edgeIndex < 0 || flow.edgeIndex >= edges.length) {
-                console.error(`Invalid edge index: ${flow.edgeIndex}`);
+            if (flow.edgeIndex === undefined || flow.edgeIndex < 0 || flow.edgeIndex >= edges.length) {
+                console.warn(`Invalid edge index: ${flow.edgeIndex}`);
                 continue;
             }
             
             const edge = edges[flow.edgeIndex];
-            const centerFrom = centers[edge.from];
-            const centerTo = centers[edge.to];
-            
-            if (!centerFrom || !centerTo) {
-                console.error(`Invalid center reference: from=${edge.from}, to=${edge.to}`);
+            if (!edge) {
+                console.warn(`Edge not found at index: ${flow.edgeIndex}`);
                 continue;
             }
             
-            // Calculate position along the edge
-            const x = centerFrom[0] + flow.t * (centerTo[0] - centerFrom[0]);
-            const y = centerFrom[1] + flow.t * (centerTo[1] - centerFrom[1]);
+            if (edge.from === undefined || edge.to === undefined) {
+                console.warn(`Edge missing from/to: ${JSON.stringify(edge)}`);
+                continue;
+            }
             
-            // Use a higher z-offset to ensure particles render on top
+            const fromCenter = centers[edge.from];
+            const toCenter = centers[edge.to];
+            
+            if (!fromCenter || !toCenter) {
+                console.warn(`Missing center at index from=${edge.from} or to=${edge.to}`);
+                continue;
+            }
+            
+            // Calculate position based on t parameter (0-1 along the edge)
+            const t = flow.t !== undefined ? flow.t : 0.5; // Default to middle if undefined
+            const x = fromCenter[0] + t * (toCenter[0] - fromCenter[0]);
+            const y = fromCenter[1] + t * (toCenter[1] - fromCenter[1]);
+            
+            // Add particle at calculated position with higher z-offset
             vertices.push(x, y, 3);
+            validParticleCount++;
+        }
+        
+        if (validParticleCount === 0) {
+            console.warn("No valid particles to render");
+            return;
         }
         
         geometry.setAttribute('position', new THREE.Float32BufferAttribute(vertices, 3));
         
-        // Create a material for the particles
+        // Create a material for the particles - pure white and larger
         this.particleMaterial = new THREE.PointsMaterial({
-            color: new THREE.Color(0xffffff), // Pure white color
-            size: 15, // Larger size for better visibility
+            color: new THREE.Color(0xffffff), // Pure white
+            size: 20, // Much larger for better visibility
             sizeAttenuation: true,
             transparent: true,
             opacity: 1.0, // Fully opaque
@@ -293,7 +329,7 @@ class FoamRenderer {
         
         this.flowParticles = new THREE.Points(geometry, this.particleMaterial);
         this.scene.add(this.flowParticles);
-        console.log(`Created ${flows.length} flow particles and added to scene`);
+        console.log(`Added ${validParticleCount} flow particles to scene`);
     }
     
     /**
@@ -301,36 +337,37 @@ class FoamRenderer {
      */
     createParticleTexture() {
         const canvas = document.createElement('canvas');
-        canvas.width = 64;
-        canvas.height = 64;
+        canvas.width = 128; // Larger texture for better quality
+        canvas.height = 128;
         
         const context = canvas.getContext('2d');
         const centerX = canvas.width / 2;
         const centerY = canvas.height / 2;
-        const radius = canvas.width / 2.5;
+        const radius = canvas.width / 3;
         
         // Clear canvas
         context.clearRect(0, 0, canvas.width, canvas.height);
         
-        // Create radial gradient
+        // Create radial gradient for glow effect
         const gradient = context.createRadialGradient(
             centerX, centerY, 0,
             centerX, centerY, radius
         );
-        gradient.addColorStop(0, 'rgba(255, 255, 255, 1.0)'); // White center
+        gradient.addColorStop(0, 'rgba(255, 255, 255, 1.0)'); // Bright white center
+        gradient.addColorStop(0.3, 'rgba(255, 255, 255, 1.0)');
         gradient.addColorStop(0.7, 'rgba(255, 255, 255, 0.8)');
         gradient.addColorStop(1, 'rgba(255, 255, 255, 0)'); // Fade to transparent
         
-        // Draw circle
+        // Draw glowing circle
         context.fillStyle = gradient;
         context.beginPath();
-        context.arc(centerX, centerY, radius, 0, Math.PI * 2, false);
+        context.arc(centerX, centerY, radius, 0, Math.PI * 2);
         context.fill();
         
-        // Draw a bright center point
+        // Add bright center dot
         context.fillStyle = 'rgba(255, 255, 255, 1.0)';
         context.beginPath();
-        context.arc(centerX, centerY, radius / 4, 0, Math.PI * 2, false);
+        context.arc(centerX, centerY, radius / 3, 0, Math.PI * 2);
         context.fill();
         
         // Create texture
@@ -343,7 +380,7 @@ class FoamRenderer {
      * Update flow particles positions based on flows
      */
     updateFlowParticles(centers, edges, flows) {
-        // If there are no particles or the number of flows has changed, recreate them
+        // If particles don't exist or flows array size has changed, recreate them
         if (!this.flowParticles || !flows || 
             (this.flowParticles.geometry.attributes.position.count !== flows.length)) {
             this.createFlowParticles(centers, edges, flows);
@@ -354,36 +391,50 @@ class FoamRenderer {
             return; // No particles to update
         }
         
+        console.log(`Updating positions for ${flows.length} particles`);
+        
         const positions = this.flowParticles.geometry.attributes.position.array;
+        let validPositionUpdates = 0;
         
         for (let i = 0; i < flows.length; i++) {
             const flow = flows[i];
+            const posIdx = i * 3;
             
-            if (flow.edgeIndex < 0 || flow.edgeIndex >= edges.length) {
-                console.warn(`Invalid edge index: ${flow.edgeIndex}`);
+            if (flow.edgeIndex === undefined || flow.edgeIndex < 0 || flow.edgeIndex >= edges.length) {
+                // Skip invalid particles
                 continue;
             }
             
             const edge = edges[flow.edgeIndex];
-            const centerFrom = centers[edge.from];
-            const centerTo = centers[edge.to];
-            
-            if (!centerFrom || !centerTo) {
-                console.warn(`Invalid center reference: from=${edge.from}, to=${edge.to}`);
+            if (!edge || edge.from === undefined || edge.to === undefined) {
                 continue;
             }
             
-            // Calculate position along edge
-            const x = centerFrom[0] + flow.t * (centerTo[0] - centerFrom[0]);
-            const y = centerFrom[1] + flow.t * (centerTo[1] - centerFrom[1]);
+            const fromCenter = centers[edge.from];
+            const toCenter = centers[edge.to];
+            
+            if (!fromCenter || !toCenter) {
+                continue;
+            }
+            
+            // Calculate position based on t parameter
+            const t = flow.t !== undefined ? flow.t : 0.5;
             
             // Update position
-            positions[i * 3] = x;
-            positions[i * 3 + 1] = y;
-            positions[i * 3 + 2] = 3; // Keep z-offset consistent
+            positions[posIdx] = fromCenter[0] + t * (toCenter[0] - fromCenter[0]);
+            positions[posIdx + 1] = fromCenter[1] + t * (toCenter[1] - fromCenter[1]);
+            positions[posIdx + 2] = 3; // Consistent z-offset
+            
+            validPositionUpdates++;
         }
         
-        this.flowParticles.geometry.attributes.position.needsUpdate = true;
+        // Only mark as needing update if we actually updated positions
+        if (validPositionUpdates > 0) {
+            this.flowParticles.geometry.attributes.position.needsUpdate = true;
+            if (validPositionUpdates % 100 === 0) {
+                console.log(`Updated positions for ${validPositionUpdates} particles`);
+            }
+        }
     }
     
     /**

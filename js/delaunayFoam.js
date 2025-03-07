@@ -53,9 +53,23 @@ class DelaunayFoam {
         this.lastLogTime = 0;
         
         // Initialize points and triangulation
+        this.init();
+    }
+    
+    init() {
+        // Initialize points
         this.initPoints();
+        
+        // Perform Delaunay triangulation
         this.triangulate();
+        
+        // Create Voronoi foam
         this.createFoam();
+        
+        // Initialize time tracking
+        this.currentTime = 0;
+        this.lastReleaseTime = 0;
+        this.lastLogTime = 0;
     }
     
     /**
@@ -343,11 +357,19 @@ class DelaunayFoam {
     }
     
     /**
-     * Update flows - now handles particle creation, movement, and removal
+     * Update the simulation
+     * @param {number} deltaTime - Time since last update in seconds
      */
-    updateFlows(deltaTime) {
-        // If it's time to release new particles, do so
+    update(deltaTime) {
+        // Track total simulation time
         this.currentTime += deltaTime;
+        
+        // Initialize particles if this is the first update and we have edges
+        if (this.flows.length === 0 && this.voronoiEdges.length > 0 && this.currentTime > 0.1) {
+            console.log("Initializing particles on first update");
+            this.releaseParticles(this.currentTime);
+            this.lastReleaseTime = this.currentTime;
+        }
         
         // Check if it's time to release more particles
         if (this.currentTime - this.lastReleaseTime >= this.particleReleaseInterval) {
@@ -356,75 +378,77 @@ class DelaunayFoam {
         }
         
         // Update existing particles
-        for (let i = this.foamFlows.length - 1; i >= 0; i--) {
-            const flow = this.foamFlows[i];
+        this.updateParticlePositions(deltaTime);
+        
+        // Apply dynamics (point movement)
+        this.updateDelaunayPoints(deltaTime);
+        
+        // Re-triangulate if needed
+        this.frameCount++;
+        if (this.frameCount >= this.bufferFrames) {
+            this.frameCount = 0;
+            this.triangulate();
+            this.createFoam();
+        }
+    }
+    
+    /**
+     * Update existing particle positions
+     */
+    updateParticlePositions(deltaTime) {
+        // Update existing particles
+        for (let i = this.flows.length - 1; i >= 0; i--) {
+            const flow = this.flows[i];
             
             // Check if the particle has exceeded its lifetime
             if (this.currentTime - flow.birthTime > this.particleLifetime) {
                 // Remove expired particle
-                this.foamFlows.splice(i, 1);
+                this.flows.splice(i, 1);
                 continue;
             }
             
-            // Update position along the edge
+            // Get the edge
+            if (flow.edgeIndex < 0 || flow.edgeIndex >= this.voronoiEdges.length) {
+                console.warn(`Invalid edge index: ${flow.edgeIndex}`);
+                this.flows.splice(i, 1);
+                continue;
+            }
+            
             const edge = this.voronoiEdges[flow.edgeIndex];
-            const length = this.calculateDistance(
-                this.triangleCenters[edge.from],
-                this.triangleCenters[edge.to]
-            );
             
-            // Convert t position to a 0-1 scale for the current edge
-            let currentEdgeT = flow.t;
+            // Simple movement along the edge
+            flow.t += flow.direction * flow.velocity * deltaTime;
             
-            // Move the particle based on velocity and deltaTime
-            // direction is either 1 (forward) or -1 (backward)
-            let newT = currentEdgeT + (flow.direction * flow.velocity * deltaTime / length);
-            
-            // If the particle reaches an endpoint of the edge (t=0 or t=1)
-            if (newT <= 0 || newT >= 1) {
+            // Check for edge transitions
+            if (flow.t <= 0 || flow.t >= 1) {
                 // Determine which vertex we've reached
-                const vertexIndex = newT <= 0 ? edge.from : edge.to;
+                const vertexIndex = flow.t <= 0 ? edge.from : edge.to;
                 
                 // Find the next edge to move to
-                const nextEdgeIndex = this.findNextEdge(
-                    flow.edgeIndex, 
-                    vertexIndex, 
-                    flow.direction > 0
-                );
+                const nextEdgeIndex = this.findNextEdge(flow.edgeIndex, vertexIndex, flow.direction > 0);
                 
                 if (nextEdgeIndex === -1) {
                     // No valid next edge, remove the particle
-                    this.foamFlows.splice(i, 1);
+                    this.flows.splice(i, 1);
                     continue;
                 }
                 
-                // Move to the next edge
+                // Transition to the next edge
                 flow.edgeIndex = nextEdgeIndex;
-                
-                // Adjust t-value to start at the correct end of the new edge
                 const newEdge = this.voronoiEdges[nextEdgeIndex];
                 
-                // If we're entering the edge from the "from" vertex, start at t=0
-                // If we're entering from the "to" vertex, start at t=1
+                // Set the t-value for the new edge
                 if (newEdge.from === vertexIndex) {
-                    flow.t = 0.01; // Start slightly away from the vertex
+                    flow.t = 0.01; // Start slightly inside the edge
+                    flow.direction = 1; // Moving from 'from' to 'to'
                 } else {
-                    flow.t = 0.99; // Start slightly away from the vertex
+                    flow.t = 0.99; // Start slightly inside the edge
+                    flow.direction = -1; // Moving from 'to' to 'from'
                 }
                 
-                // Calculate the contraction effect at the vertex
+                // Apply contraction at the vertex
                 this.applyContraction(vertexIndex);
-            } else {
-                // Just update the t-value on the current edge
-                flow.t = newT;
             }
-        }
-        
-        // Log the number of active particles every few seconds
-        if (Math.floor(this.currentTime) % 2 === 0 && 
-            Math.floor(this.currentTime) !== Math.floor(this.lastLogTime)) {
-            console.log(`Active particles: ${this.foamFlows.length}`);
-            this.lastLogTime = this.currentTime;
         }
     }
     
@@ -432,38 +456,52 @@ class DelaunayFoam {
      * Release new particles from edges
      */
     releaseParticles(currentTime) {
-        // Limit the number of edges we release particles from to avoid overwhelming the system
-        const maxEdgesToRelease = Math.min(20, Math.floor(this.voronoiEdges.length * 0.25));
+        // Ensure we have edges to work with
+        if (!this.voronoiEdges || this.voronoiEdges.length === 0) {
+            console.warn("No edges available for particles");
+            return;
+        }
         
-        // Only release particles from a subset of edges
-        const step = Math.max(1, Math.floor(this.voronoiEdges.length / maxEdgesToRelease));
+        // Release particles on ALL edges initially, then be more selective on subsequent releases
+        const firstRelease = this.flows.length === 0;
+        const edgesToRelease = firstRelease ? this.voronoiEdges.length : Math.min(50, this.voronoiEdges.length);
+        
+        // Determine step size based on release type
+        const step = firstRelease ? 1 : Math.max(1, Math.floor(this.voronoiEdges.length / edgesToRelease));
+        
+        console.log(`Releasing particles on ${edgesToRelease} edges (step: ${step})`);
         let count = 0;
         
         for (let i = 0; i < this.voronoiEdges.length; i += step) {
+            // Skip edges that have null centers (should not happen but safety check)
+            const edge = this.voronoiEdges[i];
+            if (!this.triangleCenters[edge.from] || !this.triangleCenters[edge.to]) {
+                continue;
+            }
+            
             // Create two particles per edge, moving in opposite directions
             // First particle (moving forward)
-            this.foamFlows.push({
+            this.flows.push({
                 edgeIndex: i,
-                t: 0.5,   // Start in the middle of the edge
-                velocity: 0.05 + Math.random() * 0.1, // Random velocity 
-                direction: 1,   // Forward
+                t: 0.5,          // Start in the middle of the edge
+                velocity: 0.3,   // Fixed velocity for consistent movement
+                direction: 1,    // Forward direction
                 birthTime: currentTime
             });
             
             // Second particle (moving backward)
-            this.foamFlows.push({
+            this.flows.push({
                 edgeIndex: i,
-                t: 0.5,   // Start in the middle of the edge
-                velocity: 0.05 + Math.random() * 0.1, // Random velocity
-                direction: -1,  // Backward
+                t: 0.5,          // Start in the middle of the edge
+                velocity: 0.3,   // Fixed velocity for consistent movement
+                direction: -1,   // Backward direction
                 birthTime: currentTime
             });
             
             count += 2;
         }
         
-        // Log the number of particles released
-        console.log(`Released ${count} particles. Total active: ${this.foamFlows.length}`);
+        console.log(`Released ${count} particles. Total active: ${this.flows.length}`);
     }
     
     /**
@@ -571,56 +609,6 @@ class DelaunayFoam {
         while (angle > 2 * Math.PI) angle -= 2 * Math.PI;
         
         return Math.min(angle, 2 * Math.PI - angle);
-    }
-    
-    /**
-     * Updates the simulation by one step
-     */
-    update(deltaTime) {
-        const currentTime = performance.now() / 1000;
-        
-        // If this is the first update, initialize release time
-        if (this.lastReleaseTime === 0) {
-            this.lastReleaseTime = currentTime;
-            // Initial particle release
-            this.releaseParticles(currentTime);
-        }
-        
-        // Update flows along Voronoi edges
-        this.updateFlows(deltaTime);
-        
-        // Transfer flow from Voronoi edges to Delaunay edges
-        this.transferVoronoiFlowToDelaunay();
-        
-        // Update Delaunay points based on edge flows
-        const significant = this.updateDelaunayPoints(deltaTime);
-        
-        // Only re-triangulate if points moved significantly or buffer frames reached
-        this.frameCount++;
-        if (significant || this.frameCount >= this.bufferFrames) {
-            this.triangulate();
-            this.createFoam();
-            this.frameCount = 0;
-        }
-    }
-    
-    /**
-     * Transfer flow from Voronoi edges to their corresponding Delaunay edges
-     * This is primarily for decaying flows and handling any remaining flow transfer
-     */
-    transferVoronoiFlowToDelaunay() {
-        // Decay flows over time but maintain minimal flow for visualization
-        for (let i = 0; i < this.voronoiEdges.length; i++) {
-            if (this.voronoiEdges[i].flow > 0) {
-                this.voronoiEdges[i].flow *= 0.95;
-            }
-        }
-        
-        for (let i = 0; i < this.delaunayEdges.length; i++) {
-            if (this.delaunayEdges[i].flow > 0) {
-                this.delaunayEdges[i].flow *= 0.98;
-            }
-        }
     }
     
     /**
