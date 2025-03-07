@@ -22,7 +22,7 @@ class UIController {
             equilibriumDistance: foam.equilibriumDistance,
             
             // Visualization parameters
-            showDelaunayMesh: true,      // Combined control for Delaunay triangulation
+            showDelaunayEdges: true,     // The backbone of our model
             showFoamEdges: true,         // Voronoi edges
             showFlowParticles: true,     // Flow particles
             
@@ -100,14 +100,11 @@ class UIController {
             });
         
         // Visualization parameters
-        visualizationFolder.add(this.params, 'showDelaunayMesh')
-            .name('Show Delaunay Mesh')
+        visualizationFolder.add(this.params, 'showDelaunayEdges')
+            .name('Show Delaunay Edges')
             .onChange(value => {
-                // Update both triangulation and delaunay edges visibility
-                this.renderer.setVisibility({ 
-                    showTriangulation: value,
-                    showDelaunayEdges: value 
-                });
+                // Only show Delaunay edges, not triangulation
+                this.renderer.setVisibility({ showDelaunayEdges: value });
             });
         
         visualizationFolder.add(this.params, 'showFoamEdges')
@@ -125,8 +122,8 @@ class UIController {
         // Color controls
         const colorParams = {
             backgroundColor: '#111111',
-            delaunayMeshColor: '#7a7a7a',
-            foamEdgesColor: '#2288ff',
+            delaunayEdgesColor: '#7a7a7a',
+            voronoiMeshColor: '#2288ff',
             flowParticlesColor: '#ff8822'
         };
         
@@ -138,17 +135,13 @@ class UIController {
                 this.renderer.setColors({ background: value });
             });
         
-        colorFolder.addColor(colorParams, 'delaunayMeshColor')
-            .name('Delaunay Mesh')
+        colorFolder.addColor(colorParams, 'delaunayEdgesColor')
+            .name('Delaunay Edges')
             .onChange(value => {
-                // Update both triangles and delaunay edges colors
-                this.renderer.setColors({ 
-                    triangles: value,
-                    delaunayLines: value 
-                });
+                this.renderer.setColors({ delaunayLines: value });
             });
         
-        colorFolder.addColor(colorParams, 'foamEdgesColor')
+        colorFolder.addColor(colorParams, 'voronoiMeshColor')
             .name('Voronoi Mesh')
             .onChange(value => {
                 this.renderer.setColors({ foamLines: value });

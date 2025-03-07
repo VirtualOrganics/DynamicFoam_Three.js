@@ -106,13 +106,13 @@ class FoamRenderer {
      */
     updateFoamData(foamData) {
         // Remove previous objects
-        if (this.triangles) this.scene.remove(this.triangles);
+        if (this.triangles) {
+            this.scene.remove(this.triangles);
+            this.triangles = null; // Set to null to ensure it's not referenced
+        }
         if (this.foamLines) this.scene.remove(this.foamLines);
         if (this.flowParticles) this.scene.remove(this.flowParticles);
         if (this.delaunayLines) this.scene.remove(this.delaunayLines);
-        
-        // Create triangulation visualization
-        this.createTriangulation(foamData.points, foamData.triangles);
         
         // Create delaunay edges visualization
         this.createDelaunayEdges(foamData.points, foamData.delaunayEdges);
