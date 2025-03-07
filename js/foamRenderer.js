@@ -346,7 +346,7 @@ class FoamRenderer {
     }
     
     /**
-     * Create flow particles visualization using spheres instead of points
+     * Create flow particles visualization using spheres
      */
     createFlowParticles(centers, edges, flows) {
         // Remove old particles if they exist
@@ -372,34 +372,29 @@ class FoamRenderer {
         
         console.log(`Creating flow particles for ${flows.length} particles`);
         
-        // Print some debug info about the flows data
-        if (flows.length > 0) {
-            console.log("First flow object:", JSON.stringify(flows[0]));
-        }
-        
         // Create a new group to hold all particle meshes
         this.flowParticles = new THREE.Group();
         
         // Create sphere geometry and material once for reuse
-        const sphereGeometry = new THREE.SphereGeometry(8, 8, 8); // Larger radius for better visibility
+        const sphereGeometry = new THREE.SphereGeometry(6, 8, 8); // Smaller radius
         const sphereMaterial = new THREE.MeshBasicMaterial({
             color: 0xffffff,  // Pure white
-            transparent: false, // No transparency for better visibility
+            transparent: false,
             opacity: 1.0
         });
         
         let validParticleCount = 0;
         
         // Create a mesh for each particle
-        for (const flow of flows) {
-            if (flow.edgeIndex === undefined || flow.edgeIndex < 0 || flow.edgeIndex >= edges.length) {
-                console.warn(`Skipping flow with invalid edge index: ${flow.edgeIndex}`);
+        for (let i = 0; i < flows.length; i++) {
+            const flow = flows[i];
+            
+            if (!flow || flow.edgeIndex === undefined || flow.edgeIndex < 0 || flow.edgeIndex >= edges.length) {
                 continue;
             }
             
             const edge = edges[flow.edgeIndex];
             if (!edge || edge.from === undefined || edge.to === undefined) {
-                console.warn(`Skipping flow with invalid edge: ${JSON.stringify(edge)}`);
                 continue;
             }
             
@@ -407,7 +402,6 @@ class FoamRenderer {
             const toCenter = centers[edge.to];
             
             if (!fromCenter || !toCenter) {
-                console.warn(`Skipping flow with missing centers: from=${edge.from}, to=${edge.to}`);
                 continue;
             }
             
@@ -418,8 +412,8 @@ class FoamRenderer {
             
             // Create a sphere mesh for this particle
             const particleMesh = new THREE.Mesh(sphereGeometry, sphereMaterial.clone());
-            particleMesh.position.set(x, y, 5); // Even higher z-offset for better visibility
-            particleMesh.userData.flowIndex = validParticleCount; // Store index for updates
+            particleMesh.position.set(x, y, 5); // Higher z-offset
+            particleMesh.userData.flowIndex = i; // Store original index
             
             // Add to the group
             this.flowParticles.add(particleMesh);
@@ -442,9 +436,9 @@ class FoamRenderer {
     updateFlowParticles(centers, edges, flows) {
         // If particles don't exist or flows array size has drastically changed, recreate them
         const shouldRecreate = !this.flowParticles || 
-                              !flows || 
-                              !this.flowParticles.isGroup ||
-                              (flows.length > 0 && Math.abs(this.flowParticles.children.length - flows.length) > 10);
+                               !flows || 
+                               !this.flowParticles.isGroup ||
+                               (flows.length > 0 && Math.abs(this.flowParticles.children.length - flows.length) > 20);
         
         if (shouldRecreate) {
             this.createFlowParticles(centers, edges, flows);
@@ -455,18 +449,15 @@ class FoamRenderer {
             return; // No particles to update
         }
         
-        console.log(`Updating positions for ${flows.length} particles, have ${this.flowParticles.children.length} meshes`);
-        
         // Update positions of existing meshes, add or remove as needed
-        let validUpdateCount = 0;
+        const minCount = Math.min(flows.length, this.flowParticles.children.length);
         
         // Update existing particles
-        const minCount = Math.min(flows.length, this.flowParticles.children.length);
         for (let i = 0; i < minCount; i++) {
             const flow = flows[i];
             const mesh = this.flowParticles.children[i];
             
-            if (flow.edgeIndex === undefined || flow.edgeIndex < 0 || flow.edgeIndex >= edges.length) {
+            if (!flow || flow.edgeIndex === undefined || flow.edgeIndex < 0 || flow.edgeIndex >= edges.length) {
                 mesh.visible = false;
                 continue;
             }
@@ -489,18 +480,16 @@ class FoamRenderer {
             const t = flow.t !== undefined ? flow.t : 0.5;
             mesh.position.x = fromCenter[0] + t * (toCenter[0] - fromCenter[0]);
             mesh.position.y = fromCenter[1] + t * (toCenter[1] - fromCenter[1]);
-            mesh.position.z = 3; // Consistent z-offset
+            mesh.position.z = 5; // Keep above the plane
             mesh.visible = true;
-            
-            validUpdateCount++;
         }
         
         // Handle case where we have more flows than meshes
         if (flows.length > this.flowParticles.children.length) {
-            const sphereGeometry = new THREE.SphereGeometry(5, 8, 8);
+            const sphereGeometry = new THREE.SphereGeometry(6, 8, 8);
             const sphereMaterial = new THREE.MeshBasicMaterial({
                 color: 0xffffff,
-                transparent: true,
+                transparent: false,
                 opacity: 1.0
             });
             
@@ -508,7 +497,7 @@ class FoamRenderer {
             for (let i = this.flowParticles.children.length; i < flows.length; i++) {
                 const flow = flows[i];
                 
-                if (flow.edgeIndex === undefined || flow.edgeIndex < 0 || flow.edgeIndex >= edges.length) {
+                if (!flow || flow.edgeIndex === undefined || flow.edgeIndex < 0 || flow.edgeIndex >= edges.length) {
                     continue;
                 }
                 
@@ -527,11 +516,10 @@ class FoamRenderer {
                 
                 // Create new mesh
                 const particleMesh = new THREE.Mesh(sphereGeometry, sphereMaterial.clone());
-                particleMesh.position.set(x, y, 3);
+                particleMesh.position.set(x, y, 5);
                 
                 // Add to the group
                 this.flowParticles.add(particleMesh);
-                validUpdateCount++;
             }
         }
         // Handle case where we have more meshes than flows
@@ -541,8 +529,6 @@ class FoamRenderer {
                 this.flowParticles.children[i].visible = false;
             }
         }
-        
-        console.log(`Successfully updated ${validUpdateCount} particle positions`);
     }
     
     /**

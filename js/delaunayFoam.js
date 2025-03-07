@@ -7,52 +7,45 @@ import * as THREE from 'three';
  */
 class DelaunayFoam {
     constructor(width, height, numPoints = 100) {
+        // Dimensions
         this.width = width;
         this.height = height;
         this.numPoints = numPoints;
         
-        // Points for triangulation
+        // Points and edges
         this.points = [];
-        this.delaunay = null;
-        
-        // Delaunay and Voronoi structures
-        this.triangleCenters = [];         // Voronoi vertices
-        this.delaunayEdges = [];           // Maps [pointIndex1, pointIndex2] => edgeIndex
-        this.voronoiEdges = [];            // Stores from/to triangle centers and the corresponding delaunay edge
-        this.triangleAdjacency = [];       // For each triangle, lists adjacent triangles
-        this.flows = [];               // Particles flowing on Voronoi edges
+        this.delaunayTriangles = [];
+        this.delaunayEdges = [];
+        this.triangleCenters = [];
+        this.voronoiEdges = [];
+        this.triangleAdjacency = [];
+        this.flows = [];      // Particles flowing on Voronoi edges
         
         // Center type (circumcenter, barycenter, incenter)
-        this.centerType = 'barycenter';
+        this.centerType = 'circumcenter';
         
-        // Dynamics parameters
-        this.flowSpeed = 1.0;              // Speed of particles
-        this.flowStrength = 0.02;          // How much particles contract edges
-        this.expansionThreshold = 0.5;
-        this.contractionFactor = 0.95;
-        this.expansionFactor = 1.05;
-        this.equilibriumDistance = 50;
-        this.restructureThreshold = 0.05;  // Threshold for re-triangulation
+        // Simulation parameters
+        this.pointMovementFactor = 0.1;
+        this.maxPointMovement = 0.5;
+        this.restructureThreshold = 0.3;
+        this.boundaryPadding = 50;
+        this.flowStrength = 0.1;
         
-        // Particle management parameters
-        this.particleReleaseInterval = 5.0;  // Time in seconds between particle releases
-        this.particleLifetime = 30.0;         // Lifetime of particles in seconds
-        this.lastReleaseTime = 0;            // Tracks when we last released particles
-        this.maxAngleForTraversal = Math.PI/2; // Maximum angle (90 degrees) for edge traversal
+        // Particle parameters - adjusted for better visibility
+        this.particleReleaseInterval = 0.5;   // Release particles every 0.5 seconds
+        this.particleLifetime = 5.0;          // Particles live for 5 seconds
+        this.maxAngleForTraversal = Math.PI / 2; // 90 degrees
         
-        // System stability parameters
-        this.maxPointMovement = 10;        // Limit how far a point can move in one step
-        this.boundaryPadding = 50;         // Keep points within boundaries
-        
-        // Performance optimization
-        this.bufferFrames = 5;             // Only re-triangulate every N frames
+        // Re-triangulation buffer
+        this.bufferFrames = 5;
         this.frameCount = 0;
         
         // Time tracking
         this.currentTime = 0;
+        this.lastReleaseTime = 0;
         this.lastLogTime = 0;
         
-        // Initialize points and triangulation
+        // Initialize
         this.init();
     }
     
@@ -366,24 +359,17 @@ class DelaunayFoam {
      * @param {number} deltaTime - Time since last update in seconds
      */
     update(deltaTime) {
-        // Track total simulation time
+        // Update total simulation time
         this.currentTime += deltaTime;
         
-        // Debug log
-        if (Math.floor(this.currentTime * 10) % 10 === 0) {
-            console.log(`Simulation time: ${this.currentTime.toFixed(1)}, Particles: ${this.flows.length}`);
-        }
-        
-        // Initialize particles if this is the first update and we have edges
-        if (this.flows.length === 0 && this.voronoiEdges.length > 0 && this.currentTime > 0.1) {
-            console.log("Initializing particles on first update");
+        // Initialize particles if they don't exist
+        if (this.flows.length === 0) {
             this.releaseParticles(this.currentTime);
             this.lastReleaseTime = this.currentTime;
         }
         
-        // Check if it's time to release more particles
+        // Check if it's time to release new particles
         if (this.currentTime - this.lastReleaseTime >= this.particleReleaseInterval) {
-            console.log(`Time to release particles: ${this.currentTime - this.lastReleaseTime} >= ${this.particleReleaseInterval}`);
             this.releaseParticles(this.currentTime);
             this.lastReleaseTime = this.currentTime;
         }
@@ -404,67 +390,7 @@ class DelaunayFoam {
     }
     
     /**
-     * Update existing particle positions
-     */
-    updateParticlePositions(deltaTime) {
-        // Update existing particles
-        for (let i = this.flows.length - 1; i >= 0; i--) {
-            const flow = this.flows[i];
-            
-            // Check if the particle has exceeded its lifetime
-            if (this.currentTime - flow.birthTime > this.particleLifetime) {
-                // Remove expired particle
-                this.flows.splice(i, 1);
-                continue;
-            }
-            
-            // Get the edge
-            if (flow.edgeIndex < 0 || flow.edgeIndex >= this.voronoiEdges.length) {
-                console.warn(`Invalid edge index: ${flow.edgeIndex}`);
-                this.flows.splice(i, 1);
-                continue;
-            }
-            
-            const edge = this.voronoiEdges[flow.edgeIndex];
-            
-            // Simple movement along the edge
-            flow.t += flow.direction * flow.velocity * deltaTime;
-            
-            // Check for edge transitions
-            if (flow.t <= 0 || flow.t >= 1) {
-                // Determine which vertex we've reached
-                const vertexIndex = flow.t <= 0 ? edge.from : edge.to;
-                
-                // Find the next edge to move to
-                const nextEdgeIndex = this.findNextEdge(flow.edgeIndex, vertexIndex, flow.direction > 0);
-                
-                if (nextEdgeIndex === -1) {
-                    // No valid next edge, remove the particle
-                    this.flows.splice(i, 1);
-                    continue;
-                }
-                
-                // Transition to the next edge
-                flow.edgeIndex = nextEdgeIndex;
-                const newEdge = this.voronoiEdges[nextEdgeIndex];
-                
-                // Set the t-value for the new edge
-                if (newEdge.from === vertexIndex) {
-                    flow.t = 0.01; // Start slightly inside the edge
-                    flow.direction = 1; // Moving from 'from' to 'to'
-                } else {
-                    flow.t = 0.99; // Start slightly inside the edge
-                    flow.direction = -1; // Moving from 'to' to 'from'
-                }
-                
-                // Apply contraction at the vertex
-                this.applyContraction(vertexIndex);
-            }
-        }
-    }
-    
-    /**
-     * Release new particles from edges
+     * Release new particles from edges - create particles on EVERY edge
      */
     releaseParticles(currentTime) {
         // Ensure we have edges to work with
@@ -473,37 +399,32 @@ class DelaunayFoam {
             return;
         }
         
-        // Always release particles on a good number of edges
-        const edgesToRelease = Math.min(this.voronoiEdges.length, 50);
-        const step = Math.max(1, Math.floor(this.voronoiEdges.length / edgesToRelease));
-        
-        console.log(`Releasing particles on ${edgesToRelease} edges (step: ${step}), total edges: ${this.voronoiEdges.length}`);
+        console.log(`Releasing particles on ALL ${this.voronoiEdges.length} edges`);
         let count = 0;
         
-        for (let i = 0; i < this.voronoiEdges.length; i += step) {
-            // Skip edges that have null centers (should not happen but safety check)
+        // Go through EVERY edge and create particles
+        for (let i = 0; i < this.voronoiEdges.length; i++) {
             const edge = this.voronoiEdges[i];
             if (!this.triangleCenters[edge.from] || !this.triangleCenters[edge.to]) {
-                console.warn(`Skipping edge with missing centers: ${i}, from=${edge.from}, to=${edge.to}`);
-                continue;
+                continue; // Skip invalid edges
             }
             
-            // Create two particles per edge, moving in opposite directions
-            // First particle (moving forward)
+            // Create TWO particles per edge, moving outward from center
+            // First particle: from center toward 'from' vertex
             this.flows.push({
                 edgeIndex: i,
-                t: 0.5,          // Start in the middle of the edge
-                velocity: 0.5,   // Higher velocity for better visibility
-                direction: 1,    // Forward direction
+                t: 0.5,      // Start in the middle of the edge
+                velocity: 0.5,
+                direction: -1, // Toward 'from' vertex
                 birthTime: currentTime
             });
             
-            // Second particle (moving backward)
+            // Second particle: from center toward 'to' vertex
             this.flows.push({
                 edgeIndex: i,
-                t: 0.5,          // Start in the middle of the edge
-                velocity: 0.5,   // Higher velocity for better visibility
-                direction: -1,   // Backward direction
+                t: 0.5,      // Start in the middle of the edge
+                velocity: 0.5,
+                direction: 1,  // Toward 'to' vertex
                 birthTime: currentTime
             });
             
@@ -511,104 +432,44 @@ class DelaunayFoam {
         }
         
         console.log(`Released ${count} particles. Total active: ${this.flows.length}`);
-        
-        // Log the first few particles for debugging
-        if (this.flows.length > 0) {
-            console.log("Sample particle:", JSON.stringify(this.flows[0]));
-        }
     }
     
     /**
-     * Find the next edge to move to from a vertex
-     * @param {number} currentEdgeIndex - Index of the current edge
-     * @param {number} vertexIndex - Index of the vertex
-     * @param {boolean} isForwardDirection - Whether the particle is moving in the forward direction
-     * @returns {number} Index of the next edge, or -1 if no valid edge found
+     * Update existing particle positions
      */
-    findNextEdge(currentEdgeIndex, vertexIndex, isForwardDirection) {
-        // Get all edges connected to this vertex
-        const connectedEdges = [];
-        
-        for (let i = 0; i < this.voronoiEdges.length; i++) {
-            if (i === currentEdgeIndex) continue; // Skip current edge
+    updateParticlePositions(deltaTime) {
+        // Process particles in reverse order so we can remove expired ones
+        for (let i = this.flows.length - 1; i >= 0; i--) {
+            const flow = this.flows[i];
             
-            const edge = this.voronoiEdges[i];
-            if (edge.from === vertexIndex || edge.to === vertexIndex) {
-                connectedEdges.push(i);
+            // Remove expired particles
+            if (this.currentTime - flow.birthTime > this.particleLifetime) {
+                this.flows.splice(i, 1);
+                continue;
+            }
+            
+            // Skip invalid particles
+            if (flow.edgeIndex < 0 || flow.edgeIndex >= this.voronoiEdges.length) {
+                this.flows.splice(i, 1);
+                continue;
+            }
+            
+            const edge = this.voronoiEdges[flow.edgeIndex];
+            
+            // Calculate movement along the edge
+            // direction: 1 = toward 'to' vertex, -1 = toward 'from' vertex
+            flow.t += flow.direction * flow.velocity * deltaTime;
+            
+            // Check if particle reached an endpoint
+            if (flow.t <= 0 || flow.t >= 1) {
+                // Particle has reached end of edge - remove it
+                this.flows.splice(i, 1);
+                
+                // Apply contraction at the vertex it reached
+                const vertexIndex = flow.t <= 0 ? edge.from : edge.to;
+                this.applyContraction(vertexIndex);
             }
         }
-        
-        if (connectedEdges.length === 0) {
-            return -1; // No connected edges
-        }
-        
-        // Get the current edge direction vector
-        const currentEdge = this.voronoiEdges[currentEdgeIndex];
-        let fromIndex, toIndex;
-        
-        // Determine the direction vector of the current edge
-        if (isForwardDirection) {
-            // We were moving from from->to
-            fromIndex = currentEdge.from;
-            toIndex = currentEdge.to;
-        } else {
-            // We were moving from to->from
-            fromIndex = currentEdge.to;
-            toIndex = currentEdge.from;
-        }
-        
-        const fromCenter = this.triangleCenters[fromIndex];
-        const toCenter = this.triangleCenters[toIndex];
-        
-        const currentDirX = toCenter[0] - fromCenter[0];
-        const currentDirY = toCenter[1] - fromCenter[1];
-        
-        // Normalize the direction vector
-        const currentLength = Math.sqrt(currentDirX * currentDirX + currentDirY * currentDirY);
-        const currentNormX = currentDirX / currentLength;
-        const currentNormY = currentDirY / currentLength;
-        
-        // Find the edge with the smallest angle to the current edge
-        let bestEdgeIndex = -1;
-        let smallestAngle = Math.PI; // Initialize to 180 degrees
-        
-        for (const nextEdgeIndex of connectedEdges) {
-            const nextEdge = this.voronoiEdges[nextEdgeIndex];
-            
-            // Determine the other vertex of the next edge
-            const otherVertexIndex = (nextEdge.from === vertexIndex) ? nextEdge.to : nextEdge.from;
-            
-            // Get the direction vector of the next edge
-            const nextCenter = this.triangleCenters[otherVertexIndex];
-            const vertexCenter = this.triangleCenters[vertexIndex];
-            
-            const nextDirX = nextCenter[0] - vertexCenter[0];
-            const nextDirY = nextCenter[1] - vertexCenter[1];
-            
-            // Normalize the next direction vector
-            const nextLength = Math.sqrt(nextDirX * nextDirX + nextDirY * nextDirY);
-            const nextNormX = nextDirX / nextLength;
-            const nextNormY = nextDirY / nextLength;
-            
-            // Calculate the angle between the vectors (dot product)
-            const dotProduct = currentNormX * nextNormX + currentNormY * nextNormY;
-            
-            // Convert to angle (in radians)
-            const angle = Math.acos(Math.min(1, Math.max(-1, dotProduct)));
-            
-            // Only consider edges that form less than 90 degrees
-            if (angle < Math.PI / 2 && angle < smallestAngle) {
-                smallestAngle = angle;
-                bestEdgeIndex = nextEdgeIndex;
-            }
-        }
-        
-        // If no edge is less than 90 degrees, just pick the one with the smallest angle
-        if (bestEdgeIndex === -1 && connectedEdges.length > 0) {
-            bestEdgeIndex = connectedEdges[0];
-        }
-        
-        return bestEdgeIndex;
     }
     
     /**
@@ -777,7 +638,6 @@ class DelaunayFoam {
     
     /**
      * Apply contraction effect at a vertex
-     * @param {number} vertexIndex - Index of the vertex
      */
     applyContraction(vertexIndex) {
         if (vertexIndex < 0 || vertexIndex >= this.triangleCenters.length) {

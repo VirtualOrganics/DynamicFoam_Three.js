@@ -4,36 +4,44 @@ import FoamRenderer from './foamRenderer.js';
 import UIController from './uiController.js';
 
 /**
- * Main application class for the DynamicFoam simulation
+ * DynamicFoamApp - Main application class
  */
 class DynamicFoamApp {
     constructor() {
-        // Set up foam simulation
-        this.foam = new DelaunayFoam(800, 600, 150);
+        this.width = window.innerWidth;
+        this.height = window.innerHeight;
+        this.container = document.getElementById('container');
         
-        // Set up Three.js renderer
-        const container = document.getElementById('canvas');
-        this.renderer = new FoamRenderer(container, window.innerWidth, window.innerHeight);
+        // Create foam simulation
+        this.foam = new DelaunayFoam(this.width, this.height, 100);
         
-        // Set up UI controller
-        const uiContainer = document.getElementById('gui-container');
-        this.ui = new UIController(uiContainer, this.foam, this.renderer);
+        // Create renderer
+        this.renderer = new FoamRenderer(this.container, this.width, this.height);
         
-        // Animation properties
-        this.lastTime = 0;
+        // Create UI controller
+        this.uiController = new UIController(this.container, this.foam, this.renderer);
+        
+        // Animation state
         this.isRunning = true;
-        this.lastDebugTime = 0;
+        this.lastTime = performance.now() / 1000;
         this.lastLogTime = 0;
         
-        // Initial render
+        // Start animation
+        this.animate();
+        
+        // Initialize foam data to ensure first frame has particles
         this.updateRenderer();
         
-        // Start animation loop
-        this.animate();
+        // Ensure particles are created at startup
+        this.foam.initializeFlows();
+        const foamData = this.foam.getGeometryData();
+        this.renderer.updateFoamData(foamData);
+        
+        console.log("DynamicFoamApp initialized!");
     }
     
     /**
-     * Update the renderer with current foam data
+     * Update renderer with current foam data
      */
     updateRenderer() {
         const foamData = this.foam.getGeometryData();
@@ -41,29 +49,14 @@ class DynamicFoamApp {
     }
     
     /**
-     * Update all visualization components
+     * Update visualization options
      */
     updateVisualizations() {
+        // Get updated geometry data
         const foamData = this.foam.getGeometryData();
         
-        // Update flow particles
-        this.renderer.updateFlowParticles(
-            foamData.centers,
-            foamData.edges,
-            foamData.flows
-        );
-        
-        // Update foam edges (Voronoi)
-        this.renderer.updateFoamEdges(
-            foamData.centers,
-            foamData.edges
-        );
-        
-        // Update Delaunay edges
-        this.renderer.updateDelaunayEdges(
-            foamData.points,
-            foamData.delaunayEdges
-        );
+        // Update renderer with new data
+        this.renderer.updateFoamData(foamData);
     }
     
     /**
@@ -92,48 +85,32 @@ class DynamicFoamApp {
         if (Math.floor(currentTime) % 5 === 0 && Math.floor(currentTime) !== this.lastLogTime) {
             this.lastLogTime = Math.floor(currentTime);
             console.log(`Active particles: ${foamData.flows.length}`);
-            
-            // Check if the flow objects are properly formed
-            if (foamData.flows.length > 0) {
-                console.log("Sample flow data:", {
-                    first: JSON.stringify(foamData.flows[0]),
-                    last: JSON.stringify(foamData.flows[foamData.flows.length - 1])
-                });
-                
-                // Check for correct field names
-                const hasCorrectFields = 
-                    foamData.flows[0].hasOwnProperty('edgeIndex') && 
-                    foamData.flows[0].hasOwnProperty('t') &&
-                    foamData.flows[0].hasOwnProperty('velocity') &&
-                    foamData.flows[0].hasOwnProperty('direction');
-                    
-                console.log(`Flows have correct fields: ${hasCorrectFields}`);
-            }
         }
         
         // Update the renderer with new data
         this.renderer.updateFoamData(foamData);
-        
-        // Update visualizations
-        this.updateVisualizations();
         
         // Render the scene
         this.renderer.render();
     }
     
     /**
-     * Toggle the simulation
+     * Toggle simulation running state
      */
     toggleSimulation() {
         this.isRunning = !this.isRunning;
-        return this.isRunning;
+        if (this.isRunning) {
+            this.lastTime = performance.now() / 1000;
+        }
     }
     
     /**
-     * Reset the simulation
+     * Reset simulation
      */
     resetSimulation() {
-        this.ui.resetSimulation();
+        this.foam.reset();
+        this.foam.initializeFlows(); // Ensure particles are immediately created
+        this.updateRenderer();
     }
 }
 
