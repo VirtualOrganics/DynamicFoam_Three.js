@@ -245,13 +245,39 @@ class DelaunayFoam {
             // Update position
             flow.position += flow.velocity * deltaTime;
             
-            // Bounce at ends of edge
+            // If reached end of edge, move to next edge
             if (flow.position <= 0 || flow.position >= 1) {
-                flow.velocity = -flow.velocity;
-                flow.position = Math.max(0, Math.min(1, flow.position));
-                
-                // Accumulate flow on the edge
+                // Add flow to current edge
                 edge.flow += this.flowStrength;
+                
+                // Determine which vertex we've hit (from or to)
+                const vertex = flow.position <= 0 ? edge.from : edge.to;
+                
+                // Find all edges connected to this vertex
+                const connectedEdges = this.foamEdges.filter((e, idx) => 
+                    (e.from === vertex || e.to === vertex) && idx !== flow.edge
+                );
+                
+                if (connectedEdges.length > 0) {
+                    // Pick a random connected edge, weighted by angle
+                    // (or just random for simplicity)
+                    const nextEdge = Math.floor(Math.random() * connectedEdges.length);
+                    flow.edge = this.foamEdges.indexOf(connectedEdges[nextEdge]);
+                    
+                    // Set position at the right end of the new edge
+                    flow.position = connectedEdges[nextEdge].from === vertex ? 0 : 1;
+                    
+                    // Adjust velocity direction
+                    if ((flow.position === 0 && flow.velocity < 0) || 
+                        (flow.position === 1 && flow.velocity > 0)) {
+                        flow.velocity = -flow.velocity;
+                    }
+                } else {
+                    // If no connected edges (shouldn't happen in a proper mesh),
+                    // just bounce as before
+                    flow.velocity = -flow.velocity;
+                    flow.position = Math.max(0, Math.min(1, flow.position));
+                }
             }
         }
     }
