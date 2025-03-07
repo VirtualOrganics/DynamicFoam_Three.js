@@ -47,6 +47,7 @@ class UIController {
         const simulationFolder = this.gui.addFolder('Simulation');
         const centerTypeFolder = simulationFolder.addFolder('Center Type');
         const dynamicsFolder = simulationFolder.addFolder('Dynamics');
+        const particleSettingsFolder = this.gui.addFolder('Particle Settings');
         const visualizationFolder = this.gui.addFolder('Visualization');
         const actionsFolder = this.gui.addFolder('Actions');
         
@@ -97,6 +98,20 @@ class UIController {
             .name('Equilibrium Distance')
             .onChange(value => {
                 this.foam.setDynamicsParams({ equilibriumDistance: value });
+            });
+            
+        // Particle settings
+        particleSettingsFolder.add(this.foam, 'particleReleaseInterval', 0.1, 2.0, 0.1)
+            .name('Release Interval (s)');
+            
+        particleSettingsFolder.add(this.foam, 'particleLifetime', 0.5, 5.0, 0.5)
+            .name('Particle Lifetime (s)');
+            
+        particleSettingsFolder.add(this.foam, 'maxAngleForTraversal', 0, Math.PI, 0.1)
+            .name('Max Angle (rad)')
+            .onChange(value => {
+                // Clamp between 0 and Pi (0-180 degrees)
+                this.foam.maxAngleForTraversal = Math.max(0, Math.min(Math.PI, value));
             });
         
         // Visualization parameters
@@ -161,6 +176,7 @@ class UIController {
         // Open folders by default
         simulationFolder.open();
         dynamicsFolder.open();
+        particleSettingsFolder.open();
         visualizationFolder.open();
         actionsFolder.open();
     }

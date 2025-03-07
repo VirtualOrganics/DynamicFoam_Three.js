@@ -26,13 +26,19 @@ class DelaunayFoam {
         this.centerType = 'barycenter';
         
         // Dynamics parameters
-        this.flowSpeed = 1.0;              // Increased from 0.5 to 1.0
-        this.flowStrength = 0.02;          // Increased from 0.01 to 0.02
+        this.flowSpeed = 1.0;              // Speed of particles
+        this.flowStrength = 0.02;          // How much particles contract edges
         this.expansionThreshold = 0.5;
         this.contractionFactor = 0.95;
         this.expansionFactor = 1.05;
         this.equilibriumDistance = 50;
         this.restructureThreshold = 0.05;  // Threshold for re-triangulation
+        
+        // Particle management parameters
+        this.particleReleaseInterval = 0.5;  // Time between releasing new particles (in seconds)
+        this.particleLifetime = 2.0;         // How long particles live (in seconds)
+        this.lastReleaseTime = 0;            // Tracks when we last released particles
+        this.maxAngleForTraversal = Math.PI/2; // Maximum angle (90 degrees) for edge traversal
         
         // System stability parameters
         this.maxPointMovement = 10;        // Limit how far a point can move in one step
@@ -325,19 +331,190 @@ class DelaunayFoam {
     }
     
     /**
-     * Initialize flows on Voronoi edges
+     * Initialize flows - now just creates an empty array
      */
     initializeFlows() {
         this.foamFlows = [];
+        // We'll create particles during the update cycle instead of initializing them here
+    }
+    
+    /**
+     * Update flows - now handles particle creation, movement, and removal
+     */
+    updateFlows(deltaTime) {
+        const currentTime = performance.now() / 1000; // Current time in seconds
         
-        // One flow particle per edge
+        // Check if it's time to release new particles
+        if (currentTime - this.lastReleaseTime >= this.particleReleaseInterval) {
+            this.releaseParticles(currentTime);
+            this.lastReleaseTime = currentTime;
+        }
+        
+        // Update existing particles and remove expired ones
+        let i = 0;
+        while (i < this.foamFlows.length) {
+            const flow = this.foamFlows[i];
+            
+            // Check if particle has expired
+            if (currentTime - flow.creationTime >= this.particleLifetime) {
+                // Remove this particle and continue with the next one
+                this.foamFlows.splice(i, 1);
+                continue;
+            }
+            
+            // Update particle position
+            const edge = this.voronoiEdges[flow.edge];
+            
+            // Previous position (to detect crossing)
+            const prevPosition = flow.position;
+            
+            // Update position based on velocity and flow speed
+            flow.position += flow.velocity * this.flowSpeed * deltaTime;
+            
+            // Check if particle crosses the Delaunay edge
+            const crossedMiddle = (prevPosition < 0.5 && flow.position >= 0.5) || 
+                                 (prevPosition >= 0.5 && flow.position < 0.5);
+                                 
+            if (crossedMiddle && edge.delaunayEdge !== undefined) {
+                // Apply contraction to the corresponding Delaunay edge when crossing
+                this.delaunayEdges[edge.delaunayEdge].flow += this.flowStrength;
+                
+                // Visual feedback
+                edge.flow += this.flowStrength * 0.5;
+            }
+            
+            // Check if particle reached the end of an edge
+            if (flow.position <= 0 || flow.position >= 1) {
+                // Determine which vertex we've hit (from or to)
+                const vertex = flow.position <= 0 ? edge.from : edge.to;
+                
+                // Find next edge to traverse
+                const nextEdgeInfo = this.findNextEdge(flow.edge, vertex, flow.velocity > 0);
+                
+                if (nextEdgeInfo) {
+                    // Move to next edge
+                    flow.edge = nextEdgeInfo.edgeIndex;
+                    flow.position = nextEdgeInfo.startPosition;
+                    flow.velocity = nextEdgeInfo.velocity;
+                } else {
+                    // No valid edge to continue on - remove the particle
+                    this.foamFlows.splice(i, 1);
+                    continue;
+                }
+            }
+            
+            // Move to next particle
+            i++;
+        }
+    }
+    
+    /**
+     * Releases new particles on all edges
+     */
+    releaseParticles(currentTime) {
         for (let i = 0; i < this.voronoiEdges.length; i++) {
+            // Create two particles going in opposite directions
             this.foamFlows.push({
-                position: 0.5, // Start in middle of edge
-                velocity: this.flowSpeed * (Math.random() * 2 - 1), // Random initial velocity
-                edge: i
+                position: 0.5,                 // Start in middle of edge
+                velocity: this.flowSpeed,      // Moving forward (from 0.5 toward 1)
+                edge: i,
+                creationTime: currentTime      // Track when this particle was created
+            });
+            
+            this.foamFlows.push({
+                position: 0.5,                 // Start in middle of edge
+                velocity: -this.flowSpeed,     // Moving backward (from 0.5 toward 0)
+                edge: i,
+                creationTime: currentTime      // Track when this particle was created
             });
         }
+    }
+    
+    /**
+     * Find the next edge to traverse from a vertex
+     * Considers angle constraints for smoother flow
+     */
+    findNextEdge(currentEdgeIndex, vertexIndex, isForwardDirection) {
+        const currentEdge = this.voronoiEdges[currentEdgeIndex];
+        
+        // Get current edge direction vector from vertex
+        const currentFrom = this.triangleCenters[currentEdge.from];
+        const currentTo = this.triangleCenters[currentEdge.to];
+        
+        let currentVector;
+        if (vertexIndex === currentEdge.from) {
+            // We're at the "from" vertex, vector points from vertex to other end
+            currentVector = [currentTo[0] - currentFrom[0], currentTo[1] - currentFrom[1]];
+        } else {
+            // We're at the "to" vertex, vector points from vertex to other end
+            currentVector = [currentFrom[0] - currentTo[0], currentFrom[1] - currentTo[1]];
+        }
+        
+        // Normalize current vector
+        const currentLength = Math.sqrt(currentVector[0] * currentVector[0] + currentVector[1] * currentVector[1]);
+        currentVector[0] /= currentLength;
+        currentVector[1] /= currentLength;
+        
+        // Find all connected edges
+        const candidates = [];
+        
+        for (let i = 0; i < this.voronoiEdges.length; i++) {
+            if (i === currentEdgeIndex) continue; // Skip current edge
+            
+            const edge = this.voronoiEdges[i];
+            if (edge.from === vertexIndex || edge.to === vertexIndex) {
+                // This edge is connected at the vertex
+                
+                // Get candidate edge direction vector from vertex
+                const candFrom = this.triangleCenters[edge.from];
+                const candTo = this.triangleCenters[edge.to];
+                
+                let candidateVector;
+                let startPosition;
+                let velocity;
+                
+                if (vertexIndex === edge.from) {
+                    // We're at the "from" vertex, direction is toward "to"
+                    candidateVector = [candTo[0] - candFrom[0], candTo[1] - candFrom[1]];
+                    startPosition = 0; // Start at the beginning of the edge
+                    velocity = Math.abs(this.flowSpeed); // Moving forward
+                } else {
+                    // We're at the "to" vertex, direction is toward "from"
+                    candidateVector = [candFrom[0] - candTo[0], candFrom[1] - candTo[1]];
+                    startPosition = 1; // Start at the end of the edge
+                    velocity = -Math.abs(this.flowSpeed); // Moving backward
+                }
+                
+                // Normalize candidate vector
+                const candLength = Math.sqrt(candidateVector[0] * candidateVector[0] + candidateVector[1] * candidateVector[1]);
+                candidateVector[0] /= candLength;
+                candidateVector[1] /= candLength;
+                
+                // Calculate the angle between vectors (using dot product)
+                const dotProduct = currentVector[0] * candidateVector[0] + currentVector[1] * candidateVector[1];
+                const angle = Math.acos(Math.max(-1, Math.min(1, dotProduct))); // Clamp to avoid precision errors
+                
+                // Only consider edges with angle less than maxAngleForTraversal (not acute)
+                if (angle <= this.maxAngleForTraversal) {
+                    candidates.push({
+                        edgeIndex: i,
+                        angle: angle,
+                        startPosition: startPosition,
+                        velocity: velocity
+                    });
+                }
+            }
+        }
+        
+        if (candidates.length === 0) {
+            return null; // No valid edges to traverse
+        }
+        
+        // Sort by angle (prefer edges with smaller angle for smoother paths)
+        candidates.sort((a, b) => a.angle - b.angle);
+        
+        // Return the best candidate
+        return candidates[0];
     }
     
     /**
@@ -373,75 +550,6 @@ class DelaunayFoam {
             this.triangulate();
             this.createFoam();
             this.frameCount = 0;
-        }
-    }
-    
-    /**
-     * Update particle flows along Voronoi edges
-     */
-    updateFlows(deltaTime) {
-        for (let i = 0; i < this.foamFlows.length; i++) {
-            const flow = this.foamFlows[i];
-            const edge = this.voronoiEdges[flow.edge];
-            
-            // Previous position (to detect crossing an edge)
-            const prevPosition = flow.position;
-            
-            // Update position
-            flow.position += flow.velocity * deltaTime;
-            
-            // Check if particle crosses or hits the Delaunay edge
-            const crossedMiddle = (prevPosition < 0.5 && flow.position >= 0.5) || 
-                                  (prevPosition >= 0.5 && flow.position < 0.5);
-                                  
-            if (crossedMiddle && edge.delaunayEdge !== undefined) {
-                // Apply contraction to the corresponding Delaunay edge when crossing
-                this.delaunayEdges[edge.delaunayEdge].flow += this.flowStrength * 2;
-                
-                // Visual feedback that we're affecting the Delaunay edge
-                edge.flow += this.flowStrength * 0.5;
-            }
-            
-            // If reached end of edge, move to next edge
-            if (flow.position <= 0 || flow.position >= 1) {
-                // Add flow to current edge when reaching an endpoint
-                edge.flow += this.flowStrength;
-                
-                // Determine which vertex we've hit (from or to)
-                const vertex = flow.position <= 0 ? edge.from : edge.to;
-                
-                // Find all Voronoi edges connected to this vertex
-                const connectedEdges = [];
-                for (let j = 0; j < this.voronoiEdges.length; j++) {
-                    if (j !== flow.edge && 
-                        (this.voronoiEdges[j].from === vertex || 
-                         this.voronoiEdges[j].to === vertex)) {
-                        connectedEdges.push(j);
-                    }
-                }
-                
-                if (connectedEdges.length > 0) {
-                    // Pick a random connected edge
-                    const nextEdgeIdx = Math.floor(Math.random() * connectedEdges.length);
-                    const nextEdge = connectedEdges[nextEdgeIdx];
-                    flow.edge = nextEdge;
-                    
-                    // Set position at the correct end of the new edge
-                    const newEdge = this.voronoiEdges[nextEdge];
-                    flow.position = newEdge.from === vertex ? 0 : 1;
-                    
-                    // Adjust velocity direction based on new position
-                    if (flow.position === 0) {
-                        flow.velocity = Math.abs(flow.velocity); // Move from 0 toward 1
-                    } else {
-                        flow.velocity = -Math.abs(flow.velocity); // Move from 1 toward 0
-                    }
-                } else {
-                    // If no connected edges (shouldn't happen in proper mesh), just bounce
-                    flow.velocity = -flow.velocity;
-                    flow.position = Math.max(0, Math.min(1, flow.position));
-                }
-            }
         }
     }
     
@@ -585,6 +693,9 @@ class DelaunayFoam {
         if (params.contractionFactor !== undefined) this.contractionFactor = params.contractionFactor;
         if (params.expansionFactor !== undefined) this.expansionFactor = params.expansionFactor;
         if (params.equilibriumDistance !== undefined) this.equilibriumDistance = params.equilibriumDistance;
+        if (params.particleReleaseInterval !== undefined) this.particleReleaseInterval = params.particleReleaseInterval;
+        if (params.particleLifetime !== undefined) this.particleLifetime = params.particleLifetime;
+        if (params.maxAngleForTraversal !== undefined) this.maxAngleForTraversal = params.maxAngleForTraversal;
     }
     
     /**
