@@ -77,8 +77,10 @@ class FoamRenderer {
         
         this.particleMaterial = new THREE.PointsMaterial({
             color: this.flowParticleColor,
-            size: 3,
-            sizeAttenuation: true
+            size: 6,          // Increased from 3 to 6
+            sizeAttenuation: true,
+            transparent: true,
+            opacity: 0.8
         });
         
         this.delaunayMaterial = new THREE.LineBasicMaterial({
@@ -233,6 +235,16 @@ class FoamRenderer {
      * Create visualization of flow particles
      */
     createFlowParticles(centers, edges, flows) {
+        // Remove old particles if they exist
+        if (this.flowParticles) this.scene.remove(this.flowParticles);
+        
+        if (flows.length === 0) {
+            console.log("No flow particles to visualize");
+            return;
+        }
+        
+        console.log(`Creating visualization for ${flows.length} particles`);
+        
         const geometry = new THREE.BufferGeometry();
         
         // Create particles at flow positions
@@ -241,17 +253,32 @@ class FoamRenderer {
         const particleColor = new THREE.Color();
         
         for (const flow of flows) {
+            if (flow.edge >= edges.length) {
+                console.warn(`Invalid edge index: ${flow.edge}, max: ${edges.length-1}`);
+                continue;
+            }
+            
             const edge = edges[flow.edge];
+            if (!edge || edge.from >= centers.length || edge.to >= centers.length) {
+                console.warn(`Invalid center indices in edge: ${edge?.from}, ${edge?.to}, max: ${centers.length-1}`);
+                continue;
+            }
+            
             const from = centers[edge.from];
             const to = centers[edge.to];
+            
+            if (!from || !to) {
+                console.warn(`Null center: from=${from}, to=${to}`);
+                continue;
+            }
             
             // Interpolate position along edge
             const x = from[0] + (to[0] - from[0]) * flow.position;
             const y = from[1] + (to[1] - from[1]) * flow.position;
             
-            vertices.push(x, y, 0);
+            vertices.push(x, y, 1); // Slight z-offset to render above lines
             
-            // Color based on velocity
+            // Color based on velocity - brighter colors
             const velocityFactor = Math.min(1, Math.abs(flow.velocity) / 2);
             particleColor.setRGB(
                 this.flowParticleColor.r * (1 - velocityFactor) + velocityFactor,
@@ -262,31 +289,97 @@ class FoamRenderer {
             colors.push(particleColor.r, particleColor.g, particleColor.b);
         }
         
+        if (vertices.length === 0) {
+            console.warn("No valid particles to render");
+            return;
+        }
+        
         geometry.setAttribute('position', new THREE.Float32BufferAttribute(vertices, 3));
         geometry.setAttribute('color', new THREE.Float32BufferAttribute(colors, 3));
         
         // Update particle material to use vertex colors
-        this.particleMaterial.vertexColors = true;
+        const material = new THREE.PointsMaterial({
+            color: 0xffffff,
+            size: 8,
+            sizeAttenuation: true,
+            vertexColors: true,
+            transparent: true,
+            opacity: 0.9,
+            map: this.createParticleTexture()
+        });
         
-        this.flowParticles = new THREE.Points(geometry, this.particleMaterial);
+        this.flowParticles = new THREE.Points(geometry, material);
         this.scene.add(this.flowParticles);
+    }
+    
+    /**
+     * Create a circular particle texture with a soft edge
+     */
+    createParticleTexture() {
+        const canvas = document.createElement('canvas');
+        canvas.width = 64;
+        canvas.height = 64;
+        
+        const context = canvas.getContext('2d');
+        const centerX = canvas.width / 2;
+        const centerY = canvas.height / 2;
+        const radius = canvas.width / 3;
+        
+        // Create radial gradient
+        const gradient = context.createRadialGradient(
+            centerX, centerY, 0,
+            centerX, centerY, radius
+        );
+        gradient.addColorStop(0, 'rgba(255, 255, 255, 1)');
+        gradient.addColorStop(0.5, 'rgba(255, 255, 255, 0.8)');
+        gradient.addColorStop(1, 'rgba(255, 255, 255, 0)');
+        
+        // Draw circle
+        context.fillStyle = gradient;
+        context.beginPath();
+        context.arc(centerX, centerY, radius, 0, Math.PI * 2, false);
+        context.fill();
+        
+        // Create texture
+        const texture = new THREE.CanvasTexture(canvas);
+        texture.needsUpdate = true;
+        return texture;
     }
     
     /**
      * Update flow particle positions
      */
     updateFlowParticles(centers, edges, flows) {
-        if (!this.flowParticles) return;
+        if (!this.flowParticles || flows.length === 0) {
+            // Recreate particles if they don't exist or if flows array changed size
+            this.createFlowParticles(centers, edges, flows);
+            return;
+        }
+        
+        // Check if the particle count has changed
+        if (this.flowParticles.geometry.attributes.position.count !== flows.length) {
+            // Recreate the particles with the new count
+            this.createFlowParticles(centers, edges, flows);
+            return;
+        }
         
         const positions = this.flowParticles.geometry.attributes.position.array;
         const colors = this.flowParticles.geometry.attributes.color.array;
         const particleColor = new THREE.Color();
         
+        // Update each particle's position
         for (let i = 0; i < flows.length; i++) {
             const flow = flows[i];
+            
+            // Safety checks
+            if (flow.edge >= edges.length) continue;
+            
             const edge = edges[flow.edge];
+            if (!edge || edge.from >= centers.length || edge.to >= centers.length) continue;
+            
             const from = centers[edge.from];
             const to = centers[edge.to];
+            if (!from || !to) continue;
             
             // Update position
             const x = from[0] + (to[0] - from[0]) * flow.position;
@@ -294,6 +387,7 @@ class FoamRenderer {
             
             positions[i * 3] = x;
             positions[i * 3 + 1] = y;
+            positions[i * 3 + 2] = 1; // Keep z-offset
             
             // Update color based on velocity
             const velocityFactor = Math.min(1, Math.abs(flow.velocity) / 2);

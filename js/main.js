@@ -23,6 +23,7 @@ class DynamicFoamApp {
         this.lastTime = 0;
         this.isRunning = true;
         this.lastDebugTime = 0;
+        this.lastLogTime = 0;
         
         // Initial render
         this.updateRenderer();
@@ -89,6 +90,13 @@ class DynamicFoamApp {
         
         // Update foam simulation
         this.foam.update(deltaTime);
+        
+        // Debug logging every 2 seconds
+        if (Math.floor(time / 2000) !== Math.floor(this.lastLogTime / 2000)) {
+            const foamData = this.foam.getGeometryData();
+            console.log(`Active particles: ${foamData.flows.length}`);
+            this.lastLogTime = time;
+        }
         
         // Update visualizations
         this.updateVisualizations();

@@ -412,7 +412,12 @@ class DelaunayFoam {
      * Releases new particles on all edges
      */
     releaseParticles(currentTime) {
-        for (let i = 0; i < this.voronoiEdges.length; i++) {
+        // Only release particles on a subset of edges to avoid too many particles
+        const edgesToRelease = Math.min(20, this.voronoiEdges.length);
+        const step = Math.max(1, Math.floor(this.voronoiEdges.length / edgesToRelease));
+        
+        let count = 0;
+        for (let i = 0; i < this.voronoiEdges.length; i += step) {
             // Create two particles going in opposite directions
             this.foamFlows.push({
                 position: 0.5,                 // Start in middle of edge
@@ -427,7 +432,11 @@ class DelaunayFoam {
                 edge: i,
                 creationTime: currentTime      // Track when this particle was created
             });
+            
+            count += 2;
         }
+        
+        console.log(`Released ${count} particles, total active: ${this.foamFlows.length}`);
     }
     
     /**
@@ -535,6 +544,15 @@ class DelaunayFoam {
      * Updates the simulation by one step
      */
     update(deltaTime) {
+        const currentTime = performance.now() / 1000;
+        
+        // If this is the first update, initialize release time
+        if (this.lastReleaseTime === 0) {
+            this.lastReleaseTime = currentTime;
+            // Initial particle release
+            this.releaseParticles(currentTime);
+        }
+        
         // Update flows along Voronoi edges
         this.updateFlows(deltaTime);
         
