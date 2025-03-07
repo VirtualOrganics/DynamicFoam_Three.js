@@ -88,14 +88,31 @@ class DynamicFoamApp {
         // Get updated geometry data
         const foamData = this.foam.getGeometryData();
         
-        // Update the renderer with new data
-        this.renderer.updateFoamData(foamData);
-        
-        // Log active particles every few seconds
+        // Debug log flow data
         if (Math.floor(currentTime) % 5 === 0 && Math.floor(currentTime) !== this.lastLogTime) {
             this.lastLogTime = Math.floor(currentTime);
             console.log(`Active particles: ${foamData.flows.length}`);
+            
+            // Check if the flow objects are properly formed
+            if (foamData.flows.length > 0) {
+                console.log("Sample flow data:", {
+                    first: JSON.stringify(foamData.flows[0]),
+                    last: JSON.stringify(foamData.flows[foamData.flows.length - 1])
+                });
+                
+                // Check for correct field names
+                const hasCorrectFields = 
+                    foamData.flows[0].hasOwnProperty('edgeIndex') && 
+                    foamData.flows[0].hasOwnProperty('t') &&
+                    foamData.flows[0].hasOwnProperty('velocity') &&
+                    foamData.flows[0].hasOwnProperty('direction');
+                    
+                console.log(`Flows have correct fields: ${hasCorrectFields}`);
+            }
         }
+        
+        // Update the renderer with new data
+        this.renderer.updateFoamData(foamData);
         
         // Update visualizations
         this.updateVisualizations();

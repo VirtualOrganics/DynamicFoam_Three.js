@@ -237,7 +237,7 @@ class DelaunayFoam {
         // Clear existing structures
         this.triangleCenters = [];
         this.voronoiEdges = [];
-        this.foamFlows = [];
+        this.flows = [];
         
         // Calculate centers for each triangle
         for (let i = 0; i < this.delaunay.triangles.length / 3; i++) {
@@ -349,11 +349,16 @@ class DelaunayFoam {
     }
     
     /**
-     * Initialize flows - now just creates an empty array
+     * Initialize flow particles
      */
     initializeFlows() {
-        this.foamFlows = [];
-        // We'll create particles during the update cycle instead of initializing them here
+        this.flows = [];
+        this.currentTime = 0;
+        this.lastReleaseTime = 0;
+        
+        // Create initial particles immediately
+        console.log("Initializing initial flow particles");
+        this.releaseParticles(0);
     }
     
     /**
@@ -364,6 +369,11 @@ class DelaunayFoam {
         // Track total simulation time
         this.currentTime += deltaTime;
         
+        // Debug log
+        if (Math.floor(this.currentTime * 10) % 10 === 0) {
+            console.log(`Simulation time: ${this.currentTime.toFixed(1)}, Particles: ${this.flows.length}`);
+        }
+        
         // Initialize particles if this is the first update and we have edges
         if (this.flows.length === 0 && this.voronoiEdges.length > 0 && this.currentTime > 0.1) {
             console.log("Initializing particles on first update");
@@ -373,6 +383,7 @@ class DelaunayFoam {
         
         // Check if it's time to release more particles
         if (this.currentTime - this.lastReleaseTime >= this.particleReleaseInterval) {
+            console.log(`Time to release particles: ${this.currentTime - this.lastReleaseTime} >= ${this.particleReleaseInterval}`);
             this.releaseParticles(this.currentTime);
             this.lastReleaseTime = this.currentTime;
         }
@@ -462,20 +473,18 @@ class DelaunayFoam {
             return;
         }
         
-        // Release particles on ALL edges initially, then be more selective on subsequent releases
-        const firstRelease = this.flows.length === 0;
-        const edgesToRelease = firstRelease ? this.voronoiEdges.length : Math.min(50, this.voronoiEdges.length);
+        // Always release particles on a good number of edges
+        const edgesToRelease = Math.min(this.voronoiEdges.length, 50);
+        const step = Math.max(1, Math.floor(this.voronoiEdges.length / edgesToRelease));
         
-        // Determine step size based on release type
-        const step = firstRelease ? 1 : Math.max(1, Math.floor(this.voronoiEdges.length / edgesToRelease));
-        
-        console.log(`Releasing particles on ${edgesToRelease} edges (step: ${step})`);
+        console.log(`Releasing particles on ${edgesToRelease} edges (step: ${step}), total edges: ${this.voronoiEdges.length}`);
         let count = 0;
         
         for (let i = 0; i < this.voronoiEdges.length; i += step) {
             // Skip edges that have null centers (should not happen but safety check)
             const edge = this.voronoiEdges[i];
             if (!this.triangleCenters[edge.from] || !this.triangleCenters[edge.to]) {
+                console.warn(`Skipping edge with missing centers: ${i}, from=${edge.from}, to=${edge.to}`);
                 continue;
             }
             
@@ -484,7 +493,7 @@ class DelaunayFoam {
             this.flows.push({
                 edgeIndex: i,
                 t: 0.5,          // Start in the middle of the edge
-                velocity: 0.3,   // Fixed velocity for consistent movement
+                velocity: 0.5,   // Higher velocity for better visibility
                 direction: 1,    // Forward direction
                 birthTime: currentTime
             });
@@ -493,7 +502,7 @@ class DelaunayFoam {
             this.flows.push({
                 edgeIndex: i,
                 t: 0.5,          // Start in the middle of the edge
-                velocity: 0.3,   // Fixed velocity for consistent movement
+                velocity: 0.5,   // Higher velocity for better visibility
                 direction: -1,   // Backward direction
                 birthTime: currentTime
             });
@@ -502,6 +511,11 @@ class DelaunayFoam {
         }
         
         console.log(`Released ${count} particles. Total active: ${this.flows.length}`);
+        
+        // Log the first few particles for debugging
+        if (this.flows.length > 0) {
+            console.log("Sample particle:", JSON.stringify(this.flows[0]));
+        }
     }
     
     /**
@@ -700,14 +714,20 @@ class DelaunayFoam {
      * Return the geometry data for Three.js visualization
      */
     getGeometryData() {
-        return {
+        // Debugging output
+        const data = {
             points: this.points,
             triangles: Array.from(this.delaunay.triangles),
+            delaunayEdges: this.delaunayEdges,
             centers: this.triangleCenters,
             edges: this.voronoiEdges,
-            flows: this.foamFlows,
-            delaunayEdges: this.delaunayEdges
+            flows: this.flows
         };
+        
+        // Log summary
+        console.log(`Geometry data: ${data.flows.length} flows, ${data.edges.length} edges`);
+        
+        return data;
     }
     
     /**
