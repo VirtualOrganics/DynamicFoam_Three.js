@@ -26,8 +26,8 @@ class DelaunayFoam {
         this.centerType = 'barycenter';
         
         // Dynamics parameters
-        this.flowSpeed = 0.5;
-        this.flowStrength = 0.01;
+        this.flowSpeed = 1.0;              // Increased from 0.5 to 1.0
+        this.flowStrength = 0.02;          // Increased from 0.01 to 0.02
         this.expansionThreshold = 0.5;
         this.contractionFactor = 0.95;
         this.expansionFactor = 1.05;
@@ -329,13 +329,29 @@ class DelaunayFoam {
      */
     initializeFlows() {
         this.foamFlows = [];
+        
+        // Create multiple flows per edge for better visualization
         for (let i = 0; i < this.voronoiEdges.length; i++) {
-            this.foamFlows.push({
-                position: 0.5, // Start in middle of edge
-                velocity: this.flowSpeed * (Math.random() * 2 - 1), // Random initial velocity
-                edge: i
-            });
+            // Add 2-3 particles per edge
+            const particlesPerEdge = 2 + Math.floor(Math.random() * 2);
+            
+            for (let j = 0; j < particlesPerEdge; j++) {
+                // Distribute evenly along the edge
+                const position = (j + 1) / (particlesPerEdge + 1);
+                
+                // Ensure good initial velocity
+                const velocity = (Math.random() > 0.5 ? 1 : -1) * 
+                                  this.flowSpeed * (0.5 + Math.random());
+                                  
+                this.foamFlows.push({
+                    position: position,
+                    velocity: velocity,
+                    edge: i
+                });
+            }
         }
+        
+        console.log(`Created ${this.foamFlows.length} flow particles on ${this.voronoiEdges.length} edges`);
     }
     
     /**
@@ -382,7 +398,7 @@ class DelaunayFoam {
             const flow = this.foamFlows[i];
             const edge = this.voronoiEdges[flow.edge];
             
-            // Update position
+            // Update position with higher velocity to ensure movement
             flow.position += flow.velocity * deltaTime;
             
             // If reached end of edge, move to next edge
@@ -394,25 +410,36 @@ class DelaunayFoam {
                 const vertex = flow.position <= 0 ? edge.from : edge.to;
                 
                 // Find all Voronoi edges connected to this vertex
-                const connectedEdges = this.voronoiEdges.filter((e, idx) => 
-                    (e.from === vertex || e.to === vertex) && idx !== flow.edge
-                );
+                const connectedEdges = [];
+                for (let j = 0; j < this.voronoiEdges.length; j++) {
+                    if (j !== flow.edge && 
+                        (this.voronoiEdges[j].from === vertex || 
+                         this.voronoiEdges[j].to === vertex)) {
+                        connectedEdges.push(j);
+                    }
+                }
                 
                 if (connectedEdges.length > 0) {
-                    // Pick a random connected edge, weighted by angle if possible
-                    const nextEdge = Math.floor(Math.random() * connectedEdges.length);
-                    flow.edge = this.voronoiEdges.indexOf(connectedEdges[nextEdge]);
+                    // Pick a random connected edge
+                    const nextEdgeIdx = Math.floor(Math.random() * connectedEdges.length);
+                    const nextEdge = connectedEdges[nextEdgeIdx];
+                    flow.edge = nextEdge;
                     
-                    // Set position at the right end of the new edge
-                    flow.position = connectedEdges[nextEdge].from === vertex ? 0 : 1;
+                    // Set position at the correct end of the new edge
+                    const newEdge = this.voronoiEdges[nextEdge];
+                    flow.position = newEdge.from === vertex ? 0 : 1;
                     
-                    // Adjust velocity direction
-                    if ((flow.position === 0 && flow.velocity < 0) || 
-                        (flow.position === 1 && flow.velocity > 0)) {
-                        flow.velocity = -flow.velocity;
+                    // Adjust velocity direction based on new position
+                    if (flow.position === 0) {
+                        flow.velocity = Math.abs(flow.velocity); // Move from 0 toward 1
+                    } else {
+                        flow.velocity = -Math.abs(flow.velocity); // Move from 1 toward 0
                     }
+                    
+                    // Randomize velocity a bit to create more interesting flows
+                    flow.velocity *= 0.8 + Math.random() * 0.4; // 80% to 120% of original
                 } else {
-                    // If no connected edges, just bounce
+                    // If no connected edges (shouldn't happen in proper mesh), just bounce
                     flow.velocity = -flow.velocity;
                     flow.position = Math.max(0, Math.min(1, flow.position));
                 }
@@ -428,11 +455,35 @@ class DelaunayFoam {
             const voronoiEdge = this.voronoiEdges[i];
             
             if (voronoiEdge.delaunayEdge !== undefined && voronoiEdge.flow > 0) {
-                // Transfer flow to the corresponding Delaunay edge
-                this.delaunayEdges[voronoiEdge.delaunayEdge].flow += voronoiEdge.flow;
+                // Get the corresponding Delaunay edge
+                const delaunayEdge = this.delaunayEdges[voronoiEdge.delaunayEdge];
                 
-                // Decay Voronoi edge flow
-                voronoiEdge.flow *= 0.9;
+                // Transfer flow with amplification for better visual effect
+                const flowTransfer = voronoiEdge.flow * 2.0;
+                delaunayEdge.flow += flowTransfer;
+                
+                // Decay Voronoi edge flow but not completely to maintain motion
+                voronoiEdge.flow *= 0.7;
+            }
+        }
+        
+        // Amplify flows in connected Delaunay edges for better effect
+        for (let i = 0; i < this.delaunayEdges.length; i++) {
+            if (this.delaunayEdges[i].flow > 0.05) {
+                // Find connected Delaunay edges
+                const [p1, p2] = this.delaunayEdges[i].points;
+                
+                for (let j = 0; j < this.delaunayEdges.length; j++) {
+                    if (i === j) continue;
+                    
+                    const [q1, q2] = this.delaunayEdges[j].points;
+                    
+                    // Check if edges share a point
+                    if (p1 === q1 || p1 === q2 || p2 === q1 || p2 === q2) {
+                        // Transfer a small amount of flow to connected edges
+                        this.delaunayEdges[j].flow += this.delaunayEdges[i].flow * 0.1;
+                    }
+                }
             }
         }
     }
