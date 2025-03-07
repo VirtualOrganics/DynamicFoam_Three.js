@@ -25,6 +25,7 @@ class UIController {
             showTriangulation: true,
             showFoamEdges: true,
             showFlowParticles: true,
+            showDelaunayEdges: true,
             
             // Actions
             isRunning: true,
@@ -103,33 +104,34 @@ class UIController {
         visualizationFolder.add(this.params, 'showTriangulation')
             .name('Show Triangulation')
             .onChange(value => {
-                if (this.renderer.triangles) {
-                    this.renderer.triangles.visible = value;
-                }
+                this.renderer.setVisibility({ showTriangulation: value });
+            });
+        
+        visualizationFolder.add(this.params, 'showDelaunayEdges')
+            .name('Show Delaunay Edges')
+            .onChange(value => {
+                this.renderer.setVisibility({ showDelaunayEdges: value });
             });
         
         visualizationFolder.add(this.params, 'showFoamEdges')
             .name('Show Foam Edges')
             .onChange(value => {
-                if (this.renderer.foamLines) {
-                    this.renderer.foamLines.visible = value;
-                }
+                this.renderer.setVisibility({ showFoamEdges: value });
             });
         
         visualizationFolder.add(this.params, 'showFlowParticles')
             .name('Show Flow Particles')
             .onChange(value => {
-                if (this.renderer.flowParticles) {
-                    this.renderer.flowParticles.visible = value;
-                }
+                this.renderer.setVisibility({ showFlowParticles: value });
             });
         
         // Color controls
         const colorParams = {
             backgroundColor: '#111111',
-            trianglesColor: '#222222',
+            trianglesColor: '#7a7a7a',
             foamEdgesColor: '#2288ff',
-            flowParticlesColor: '#ff8822'
+            flowParticlesColor: '#ff8822',
+            delaunayEdgesColor: '#7a7a7a'
         };
         
         const colorFolder = visualizationFolder.addFolder('Colors');
@@ -144,6 +146,12 @@ class UIController {
             .name('Triangles')
             .onChange(value => {
                 this.renderer.setColors({ triangles: value });
+            });
+        
+        colorFolder.addColor(colorParams, 'delaunayEdgesColor')
+            .name('Delaunay Edges')
+            .onChange(value => {
+                this.renderer.setColors({ delaunayLines: value });
             });
         
         colorFolder.addColor(colorParams, 'foamEdgesColor')

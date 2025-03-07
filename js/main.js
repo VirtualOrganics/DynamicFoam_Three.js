@@ -39,25 +39,28 @@ class DynamicFoamApp {
     }
     
     /**
-     * Update flow particle visualization
+     * Update all visualization components
      */
-    updateFlowParticles() {
+    updateVisualizations() {
         const foamData = this.foam.getGeometryData();
+        
+        // Update flow particles
         this.renderer.updateFlowParticles(
             foamData.centers,
             foamData.edges,
             foamData.flows
         );
-    }
-    
-    /**
-     * Update foam edges visualization
-     */
-    updateFoamEdges() {
-        const foamData = this.foam.getGeometryData();
+        
+        // Update foam edges (Voronoi)
         this.renderer.updateFoamEdges(
             foamData.centers,
             foamData.edges
+        );
+        
+        // Update Delaunay edges
+        this.renderer.updateDelaunayEdges(
+            foamData.points,
+            foamData.delaunayEdges
         );
     }
     
@@ -67,22 +70,27 @@ class DynamicFoamApp {
     animate(time) {
         requestAnimationFrame(this.animate.bind(this));
         
-        if (!this.isRunning) return;
+        if (!this.isRunning) {
+            this.renderer.render();
+            return;
+        }
         
         // Calculate time delta
         if (!time) time = 0;
-        const deltaTime = (time - this.lastTime) / 1000; // in seconds
+        const deltaTime = Math.min((time - this.lastTime) / 1000, 0.05); // Cap at 50ms to avoid large jumps
         this.lastTime = time;
         
-        // Skip if deltaTime is too large (e.g., after tab switch)
-        if (deltaTime > 0.1) return;
+        // Skip if deltaTime is too small
+        if (deltaTime < 0.001) {
+            this.renderer.render();
+            return;
+        }
         
         // Update foam simulation
         this.foam.update(deltaTime);
         
         // Update visualizations
-        this.updateFlowParticles();
-        this.updateFoamEdges();
+        this.updateVisualizations();
         
         // Render scene
         this.renderer.render();
