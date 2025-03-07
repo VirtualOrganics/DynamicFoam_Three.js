@@ -12,57 +12,51 @@ class DelaunayFoam {
         this.height = height;
         this.numPoints = numPoints;
         
-        // Points and edges
+        // Points for triangulation
         this.points = [];
-        this.delaunayTriangles = [];
-        this.delaunayEdges = [];
-        this.triangleCenters = [];
-        this.voronoiEdges = [];
-        this.triangleAdjacency = [];
-        this.flows = [];      // Particles flowing on Voronoi edges
+        this.delaunay = null;
+        
+        // Delaunay and Voronoi structures
+        this.triangleCenters = [];         // Voronoi vertices
+        this.delaunayEdges = [];           // Maps [pointIndex1, pointIndex2] => edgeIndex
+        this.voronoiEdges = [];            // Stores from/to triangle centers and the corresponding delaunay edge
+        this.triangleAdjacency = [];       // For each triangle, lists adjacent triangles
+        this.flows = [];                   // Particles flowing on Voronoi edges
         
         // Center type (circumcenter, barycenter, incenter)
-        this.centerType = 'circumcenter';
+        this.centerType = 'barycenter';
         
-        // Simulation parameters
-        this.pointMovementFactor = 0.1;
-        this.maxPointMovement = 0.5;
-        this.restructureThreshold = 0.3;
-        this.boundaryPadding = 50;
-        this.flowStrength = 0.1;
+        // Dynamics parameters
+        this.flowSpeed = 1.0;              // Speed of particles
+        this.flowStrength = 0.02;          // How much particles contract edges
+        this.expansionThreshold = 0.5;
+        this.contractionFactor = 0.95;
+        this.expansionFactor = 1.05;
+        this.equilibriumDistance = 50;
+        this.restructureThreshold = 0.05;  // Threshold for re-triangulation
         
-        // Particle parameters - adjusted for better visibility
-        this.particleReleaseInterval = 0.5;   // Release particles every 0.5 seconds
-        this.particleLifetime = 5.0;          // Particles live for 5 seconds
-        this.maxAngleForTraversal = Math.PI / 2; // 90 degrees
+        // Particle management parameters - adjusted for better visibility
+        this.particleReleaseInterval = 0.5;  // Release particles more frequently
+        this.particleLifetime = 5.0;         // Shorter lifetime for better performance
+        this.lastReleaseTime = 0;            // Tracks when we last released particles
+        this.maxAngleForTraversal = Math.PI/2; // Maximum angle (90 degrees) for edge traversal
         
-        // Re-triangulation buffer
-        this.bufferFrames = 5;
+        // System stability parameters
+        this.maxPointMovement = 10;        // Limit how far a point can move in one step
+        this.boundaryPadding = 50;         // Keep points within boundaries
+        
+        // Performance optimization
+        this.bufferFrames = 5;             // Only re-triangulate every N frames
         this.frameCount = 0;
         
         // Time tracking
         this.currentTime = 0;
-        this.lastReleaseTime = 0;
         this.lastLogTime = 0;
         
-        // Initialize
-        this.init();
-    }
-    
-    init() {
-        // Initialize points
+        // Initialize points and triangulation
         this.initPoints();
-        
-        // Perform Delaunay triangulation
         this.triangulate();
-        
-        // Create Voronoi foam
         this.createFoam();
-        
-        // Initialize time tracking
-        this.currentTime = 0;
-        this.lastReleaseTime = 0;
-        this.lastLogTime = 0;
     }
     
     /**
@@ -346,12 +340,8 @@ class DelaunayFoam {
      */
     initializeFlows() {
         this.flows = [];
-        this.currentTime = 0;
         this.lastReleaseTime = 0;
-        
-        // Create initial particles immediately
-        console.log("Initializing initial flow particles");
-        this.releaseParticles(0);
+        // Initial release will happen on first update
     }
     
     /**
@@ -359,62 +349,95 @@ class DelaunayFoam {
      * @param {number} deltaTime - Time since last update in seconds
      */
     update(deltaTime) {
-        // Update total simulation time
+        // Update time tracking
         this.currentTime += deltaTime;
-        
-        // Initialize particles if they don't exist
-        if (this.flows.length === 0) {
-            this.releaseParticles(this.currentTime);
-            this.lastReleaseTime = this.currentTime;
-        }
-        
+
         // Check if it's time to release new particles
         if (this.currentTime - this.lastReleaseTime >= this.particleReleaseInterval) {
             this.releaseParticles(this.currentTime);
             this.lastReleaseTime = this.currentTime;
         }
+
+        // Update existing particles and dynamics
+        this.updateFlows(deltaTime);
         
-        // Update existing particles
-        this.updateParticlePositions(deltaTime);
+        // Update point positions based on edge dynamics
+        const significant = this.updateDelaunayPoints(deltaTime);
         
-        // Apply dynamics (point movement)
-        this.updateDelaunayPoints(deltaTime);
-        
-        // Re-triangulate if needed
+        // Check if we need to re-triangulate
         this.frameCount++;
-        if (this.frameCount >= this.bufferFrames) {
-            this.frameCount = 0;
+        if (significant || this.frameCount >= this.bufferFrames) {
             this.triangulate();
             this.createFoam();
+            this.frameCount = 0;
         }
     }
     
     /**
-     * Release new particles from edges - create particles on EVERY edge
+     * Update flow particles
+     * @param {number} deltaTime - Time since last update in seconds
+     */
+    updateFlows(deltaTime) {
+        // Process particles in reverse order so we can remove expired ones
+        for (let i = this.flows.length - 1; i >= 0; i--) {
+            const flow = this.flows[i];
+            
+            // Remove expired particles
+            if (this.currentTime - flow.birthTime > this.particleLifetime) {
+                this.flows.splice(i, 1);
+                continue;
+            }
+            
+            // Skip invalid particles
+            if (flow.edgeIndex < 0 || flow.edgeIndex >= this.voronoiEdges.length) {
+                this.flows.splice(i, 1);
+                continue;
+            }
+            
+            const edge = this.voronoiEdges[flow.edgeIndex];
+            
+            // Move the particle along the edge
+            // direction: 1 = toward 'to', -1 = toward 'from'
+            flow.t += flow.direction * flow.velocity * deltaTime;
+            
+            // Check if particle reached an endpoint
+            if (flow.t <= 0 || flow.t >= 1) {
+                // Particle has reached end of edge - remove it
+                this.flows.splice(i, 1);
+                
+                // Apply contraction effect at vertex
+                const vertexIndex = flow.t <= 0 ? edge.from : edge.to;
+                if (edge.delaunayEdge !== undefined) {
+                    this.delaunayEdges[edge.delaunayEdge].flow += this.flowStrength;
+                }
+            }
+        }
+    }
+    
+    /**
+     * Release new particles from edges
      */
     releaseParticles(currentTime) {
         // Ensure we have edges to work with
         if (!this.voronoiEdges || this.voronoiEdges.length === 0) {
-            console.warn("No edges available for particles");
             return;
         }
         
-        console.log(`Releasing particles on ALL ${this.voronoiEdges.length} edges`);
         let count = 0;
         
-        // Go through EVERY edge and create particles
+        // Create particles on EVERY edge
         for (let i = 0; i < this.voronoiEdges.length; i++) {
             const edge = this.voronoiEdges[i];
             if (!this.triangleCenters[edge.from] || !this.triangleCenters[edge.to]) {
                 continue; // Skip invalid edges
             }
             
-            // Create TWO particles per edge, moving outward from center
+            // Create two particles per edge, moving outward from center
             // First particle: from center toward 'from' vertex
             this.flows.push({
                 edgeIndex: i,
                 t: 0.5,      // Start in the middle of the edge
-                velocity: 0.5,
+                velocity: 0.4, // Faster velocity for better visibility
                 direction: -1, // Toward 'from' vertex
                 birthTime: currentTime
             });
@@ -423,7 +446,7 @@ class DelaunayFoam {
             this.flows.push({
                 edgeIndex: i,
                 t: 0.5,      // Start in the middle of the edge
-                velocity: 0.5,
+                velocity: 0.4, // Faster velocity for better visibility
                 direction: 1,  // Toward 'to' vertex
                 birthTime: currentTime
             });
@@ -431,7 +454,7 @@ class DelaunayFoam {
             count += 2;
         }
         
-        console.log(`Released ${count} particles. Total active: ${this.flows.length}`);
+        console.log(`Released ${count} particles. Total: ${this.flows.length}`);
     }
     
     /**
@@ -572,11 +595,10 @@ class DelaunayFoam {
     }
     
     /**
-     * Return the geometry data for Three.js visualization
+     * Get data for rendering
      */
     getGeometryData() {
-        // Debugging output
-        const data = {
+        return {
             points: this.points,
             triangles: Array.from(this.delaunay.triangles),
             delaunayEdges: this.delaunayEdges,
@@ -584,11 +606,6 @@ class DelaunayFoam {
             edges: this.voronoiEdges,
             flows: this.flows
         };
-        
-        // Log summary
-        console.log(`Geometry data: ${data.flows.length} flows, ${data.edges.length} edges`);
-        
-        return data;
     }
     
     /**

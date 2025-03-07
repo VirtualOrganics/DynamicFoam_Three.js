@@ -4,44 +4,40 @@ import FoamRenderer from './foamRenderer.js';
 import UIController from './uiController.js';
 
 /**
- * DynamicFoamApp - Main application class
+ * Main application class for the DynamicFoam simulation
  */
 class DynamicFoamApp {
     constructor() {
-        this.width = window.innerWidth;
-        this.height = window.innerHeight;
-        this.container = document.getElementById('container');
+        // Set up foam simulation
+        this.foam = new DelaunayFoam(800, 600, 150);
         
-        // Create foam simulation
-        this.foam = new DelaunayFoam(this.width, this.height, 100);
+        // Set up Three.js renderer
+        const container = document.getElementById('canvas');
+        this.renderer = new FoamRenderer(container, window.innerWidth, window.innerHeight);
         
-        // Create renderer
-        this.renderer = new FoamRenderer(this.container, this.width, this.height);
+        // Set up UI controller
+        const uiContainer = document.getElementById('gui-container');
+        this.ui = new UIController(uiContainer, this.foam, this.renderer);
         
-        // Create UI controller
-        this.uiController = new UIController(this.container, this.foam, this.renderer);
-        
-        // Animation state
+        // Animation properties
+        this.lastTime = 0;
         this.isRunning = true;
-        this.lastTime = performance.now() / 1000;
+        this.lastDebugTime = 0;
         this.lastLogTime = 0;
         
-        // Start animation
-        this.animate();
-        
-        // Initialize foam data to ensure first frame has particles
+        // Initial render
         this.updateRenderer();
         
-        // Ensure particles are created at startup
+        // Ensure initial particles are created
         this.foam.initializeFlows();
-        const foamData = this.foam.getGeometryData();
-        this.renderer.updateFoamData(foamData);
+        this.updateRenderer();
         
-        console.log("DynamicFoamApp initialized!");
+        // Start animation loop
+        this.animate();
     }
     
     /**
-     * Update renderer with current foam data
+     * Update the renderer with current foam data
      */
     updateRenderer() {
         const foamData = this.foam.getGeometryData();
@@ -49,20 +45,35 @@ class DynamicFoamApp {
     }
     
     /**
-     * Update visualization options
+     * Update all visualization components
      */
     updateVisualizations() {
-        // Get updated geometry data
         const foamData = this.foam.getGeometryData();
         
-        // Update renderer with new data
-        this.renderer.updateFoamData(foamData);
+        // Update flow particles
+        this.renderer.updateFlowParticles(
+            foamData.centers,
+            foamData.edges,
+            foamData.flows
+        );
+        
+        // Update foam edges (Voronoi)
+        this.renderer.updateFoamEdges(
+            foamData.centers,
+            foamData.edges
+        );
+        
+        // Update Delaunay edges
+        this.renderer.updateDelaunayEdges(
+            foamData.points,
+            foamData.delaunayEdges
+        );
     }
     
     /**
      * Animation loop
      */
-    animate() {
+    animate(time) {
         requestAnimationFrame(this.animate.bind(this));
         
         if (!this.isRunning) {
@@ -70,47 +81,47 @@ class DynamicFoamApp {
             return;
         }
         
-        // Calculate delta time (in seconds)
-        const currentTime = performance.now() / 1000;
-        const deltaTime = Math.min(0.1, currentTime - this.lastTime); // Cap at 100ms to avoid large jumps
-        this.lastTime = currentTime;
+        // Calculate time delta
+        if (!time) time = 0;
+        const deltaTime = Math.min((time - this.lastTime) / 1000, 0.05); // Cap at 50ms to avoid large jumps
+        this.lastTime = time;
         
-        // Update the simulation
-        this.foam.update(deltaTime);
-        
-        // Get updated geometry data
-        const foamData = this.foam.getGeometryData();
-        
-        // Debug log flow data
-        if (Math.floor(currentTime) % 5 === 0 && Math.floor(currentTime) !== this.lastLogTime) {
-            this.lastLogTime = Math.floor(currentTime);
-            console.log(`Active particles: ${foamData.flows.length}`);
+        // Skip if deltaTime is too small
+        if (deltaTime < 0.001) {
+            this.renderer.render();
+            return;
         }
         
-        // Update the renderer with new data
-        this.renderer.updateFoamData(foamData);
+        // Update foam simulation
+        this.foam.update(deltaTime);
         
-        // Render the scene
+        // Debug logging every 2 seconds
+        if (Math.floor(time / 2000) !== Math.floor(this.lastLogTime / 2000)) {
+            const foamData = this.foam.getGeometryData();
+            console.log(`Active particles: ${foamData.flows.length}`);
+            this.lastLogTime = time;
+        }
+        
+        // Update visualizations
+        this.updateVisualizations();
+        
+        // Render scene
         this.renderer.render();
     }
     
     /**
-     * Toggle simulation running state
+     * Toggle the simulation
      */
     toggleSimulation() {
         this.isRunning = !this.isRunning;
-        if (this.isRunning) {
-            this.lastTime = performance.now() / 1000;
-        }
+        return this.isRunning;
     }
     
     /**
-     * Reset simulation
+     * Reset the simulation
      */
     resetSimulation() {
-        this.foam.reset();
-        this.foam.initializeFlows(); // Ensure particles are immediately created
-        this.updateRenderer();
+        this.ui.resetSimulation();
     }
 }
 

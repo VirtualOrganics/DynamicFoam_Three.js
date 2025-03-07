@@ -346,189 +346,111 @@ class FoamRenderer {
     }
     
     /**
-     * Create flow particles visualization using spheres
+     * Create flow particles visualization
      */
     createFlowParticles(centers, edges, flows) {
         // Remove old particles if they exist
         if (this.flowParticles) {
-            // If it's a group, remove all children
-            if (this.flowParticles.isGroup) {
-                while (this.flowParticles.children.length > 0) {
-                    const mesh = this.flowParticles.children[0];
-                    mesh.geometry.dispose();
-                    mesh.material.dispose();
-                    this.flowParticles.remove(mesh);
-                }
-            }
-            
             this.scene.remove(this.flowParticles);
             this.flowParticles = null;
         }
         
         if (!flows || flows.length === 0) {
-            console.log("No flow particles to visualize");
             return;
         }
         
-        console.log(`Creating flow particles for ${flows.length} particles`);
+        // Create a geometry for the particles
+        const geometry = new THREE.BufferGeometry();
+        const vertices = [];
         
-        // Create a new group to hold all particle meshes
-        this.flowParticles = new THREE.Group();
-        
-        // Create sphere geometry and material once for reuse
-        const sphereGeometry = new THREE.SphereGeometry(6, 8, 8); // Smaller radius
-        const sphereMaterial = new THREE.MeshBasicMaterial({
-            color: 0xffffff,  // Pure white
-            transparent: false,
-            opacity: 1.0
-        });
-        
-        let validParticleCount = 0;
-        
-        // Create a mesh for each particle
-        for (let i = 0; i < flows.length; i++) {
-            const flow = flows[i];
-            
-            if (!flow || flow.edgeIndex === undefined || flow.edgeIndex < 0 || flow.edgeIndex >= edges.length) {
+        for (const flow of flows) {
+            if (flow.edgeIndex < 0 || flow.edgeIndex >= edges.length) {
                 continue;
             }
             
             const edge = edges[flow.edgeIndex];
-            if (!edge || edge.from === undefined || edge.to === undefined) {
+            const from = centers[edge.from];
+            const to = centers[edge.to];
+            
+            if (!from || !to) {
                 continue;
             }
             
-            const fromCenter = centers[edge.from];
-            const toCenter = centers[edge.to];
+            // Calculate position based on t parameter (0-1 along the edge)
+            const t = flow.t;
+            const x = from[0] + t * (to[0] - from[0]);
+            const y = from[1] + t * (to[1] - from[1]);
             
-            if (!fromCenter || !toCenter) {
-                continue;
-            }
-            
-            // Calculate position based on t parameter
-            const t = flow.t !== undefined ? flow.t : 0.5;
-            const x = fromCenter[0] + t * (toCenter[0] - fromCenter[0]);
-            const y = fromCenter[1] + t * (toCenter[1] - fromCenter[1]);
-            
-            // Create a sphere mesh for this particle
-            const particleMesh = new THREE.Mesh(sphereGeometry, sphereMaterial.clone());
-            particleMesh.position.set(x, y, 5); // Higher z-offset
-            particleMesh.userData.flowIndex = i; // Store original index
-            
-            // Add to the group
-            this.flowParticles.add(particleMesh);
-            validParticleCount++;
+            // Add particle at calculated position with z-offset
+            vertices.push(x, y, 2);
         }
         
-        if (validParticleCount === 0) {
-            console.warn("No valid particles to render");
+        if (vertices.length === 0) {
             return;
         }
         
-        // Add the group to the scene
+        geometry.setAttribute('position', new THREE.Float32BufferAttribute(vertices, 3));
+        
+        // Create a material for the particles
+        const material = new THREE.PointsMaterial({
+            color: 0xffffff,  // Pure white
+            size: 8,          // Large enough to be easily visible
+            sizeAttenuation: false, // Consistent size regardless of zoom
+            transparent: false
+        });
+        
+        this.flowParticles = new THREE.Points(geometry, material);
         this.scene.add(this.flowParticles);
-        console.log(`Added ${validParticleCount} flow particle meshes to scene`);
     }
     
     /**
-     * Update flow particles positions based on flows
+     * Update flow particles positions
      */
     updateFlowParticles(centers, edges, flows) {
-        // If particles don't exist or flows array size has drastically changed, recreate them
-        const shouldRecreate = !this.flowParticles || 
-                               !flows || 
-                               !this.flowParticles.isGroup ||
-                               (flows.length > 0 && Math.abs(this.flowParticles.children.length - flows.length) > 20);
-        
-        if (shouldRecreate) {
+        // If number of particles has changed significantly, recreate them
+        if (!this.flowParticles || 
+            !flows || 
+            Math.abs((this.flowParticles.geometry.attributes.position.count / 3) - flows.length) > 10) {
             this.createFlowParticles(centers, edges, flows);
             return;
         }
         
-        if (flows.length === 0) {
-            return; // No particles to update
+        // If no flows, nothing to update
+        if (!flows || flows.length === 0) {
+            return;
         }
         
-        // Update positions of existing meshes, add or remove as needed
-        const minCount = Math.min(flows.length, this.flowParticles.children.length);
+        // Update positions of existing particles
+        const positions = this.flowParticles.geometry.attributes.position.array;
+        const particleCount = Math.min(flows.length, positions.length / 3);
         
-        // Update existing particles
-        for (let i = 0; i < minCount; i++) {
+        for (let i = 0; i < particleCount; i++) {
             const flow = flows[i];
-            const mesh = this.flowParticles.children[i];
             
-            if (!flow || flow.edgeIndex === undefined || flow.edgeIndex < 0 || flow.edgeIndex >= edges.length) {
-                mesh.visible = false;
+            if (flow.edgeIndex < 0 || flow.edgeIndex >= edges.length) {
                 continue;
             }
             
             const edge = edges[flow.edgeIndex];
-            if (!edge || edge.from === undefined || edge.to === undefined) {
-                mesh.visible = false;
-                continue;
-            }
+            const from = centers[edge.from];
+            const to = centers[edge.to];
             
-            const fromCenter = centers[edge.from];
-            const toCenter = centers[edge.to];
-            
-            if (!fromCenter || !toCenter) {
-                mesh.visible = false;
+            if (!from || !to) {
                 continue;
             }
             
             // Calculate new position
-            const t = flow.t !== undefined ? flow.t : 0.5;
-            mesh.position.x = fromCenter[0] + t * (toCenter[0] - fromCenter[0]);
-            mesh.position.y = fromCenter[1] + t * (toCenter[1] - fromCenter[1]);
-            mesh.position.z = 5; // Keep above the plane
-            mesh.visible = true;
+            const t = flow.t;
+            const x = from[0] + t * (to[0] - from[0]);
+            const y = from[1] + t * (to[1] - from[1]);
+            
+            // Update position
+            positions[i * 3] = x;
+            positions[i * 3 + 1] = y;
+            positions[i * 3 + 2] = 2; // Keep z-offset consistent
         }
         
-        // Handle case where we have more flows than meshes
-        if (flows.length > this.flowParticles.children.length) {
-            const sphereGeometry = new THREE.SphereGeometry(6, 8, 8);
-            const sphereMaterial = new THREE.MeshBasicMaterial({
-                color: 0xffffff,
-                transparent: false,
-                opacity: 1.0
-            });
-            
-            // Create additional particles
-            for (let i = this.flowParticles.children.length; i < flows.length; i++) {
-                const flow = flows[i];
-                
-                if (!flow || flow.edgeIndex === undefined || flow.edgeIndex < 0 || flow.edgeIndex >= edges.length) {
-                    continue;
-                }
-                
-                const edge = edges[flow.edgeIndex];
-                if (!edge || !centers[edge.from] || !centers[edge.to]) {
-                    continue;
-                }
-                
-                const fromCenter = centers[edge.from];
-                const toCenter = centers[edge.to];
-                
-                // Calculate position
-                const t = flow.t !== undefined ? flow.t : 0.5;
-                const x = fromCenter[0] + t * (toCenter[0] - fromCenter[0]);
-                const y = fromCenter[1] + t * (toCenter[1] - fromCenter[1]);
-                
-                // Create new mesh
-                const particleMesh = new THREE.Mesh(sphereGeometry, sphereMaterial.clone());
-                particleMesh.position.set(x, y, 5);
-                
-                // Add to the group
-                this.flowParticles.add(particleMesh);
-            }
-        }
-        // Handle case where we have more meshes than flows
-        else if (flows.length < this.flowParticles.children.length) {
-            // Hide excess meshes
-            for (let i = flows.length; i < this.flowParticles.children.length; i++) {
-                this.flowParticles.children[i].visible = false;
-            }
-        }
+        this.flowParticles.geometry.attributes.position.needsUpdate = true;
     }
     
     /**
