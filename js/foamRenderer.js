@@ -61,10 +61,10 @@ class FoamRenderer {
         
         // Create materials
         this.triangleMaterial = new THREE.MeshBasicMaterial({
-            color: this.triangleColor,
+            color: 0x444444,  // Lighter gray for more contrast
             wireframe: true,
             transparent: true,
-            opacity: 0.3
+            opacity: 0.4      // Slightly more opaque
         });
         
         this.lineMaterial = new THREE.LineBasicMaterial({
