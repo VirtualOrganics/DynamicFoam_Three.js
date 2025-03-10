@@ -334,7 +334,7 @@ class DelaunayFoam {
         for (let i = 0; i < this.voronoiEdges.length; i++) {
             this.foamFlows.push({
                 position: 0.5, // Start in middle of edge
-                velocity: this.flowSpeed * (Math.random() * 2 - 1), // Random initial velocity
+                velocity: this.flowSpeed * (Math.random() > 0.5 ? 1 : -1), // Use consistent speed with random direction
                 edge: i
             });
         }
@@ -387,12 +387,23 @@ class DelaunayFoam {
             // Previous position (to detect crossing an edge)
             const prevPosition = flow.position;
             
-            // Update position
+            // Update position using the current flowSpeed parameter
+            // Scale the flow velocity by flowSpeed to control how fast particles move
+            flow.velocity = Math.sign(flow.velocity) * this.flowSpeed;
             flow.position += flow.velocity * deltaTime;
+            
+            // Check if particle reaches the end of an edge
+            if (flow.position >= 1.0) {
+                // Wrap around to the beginning
+                flow.position = 0.0;
+            } else if (flow.position < 0.0) {
+                // Wrap around to the end
+                flow.position = 1.0;
+            }
             
             // Check if particle crosses or hits the Delaunay edge
             const crossedMiddle = (prevPosition < 0.5 && flow.position >= 0.5) || 
-                                  (prevPosition >= 0.5 && flow.position < 0.5);
+                                 (prevPosition >= 0.5 && flow.position < 0.5);
                                   
             if (crossedMiddle && edge.delaunayEdge !== undefined) {
                 // Apply contraction to the corresponding Delaunay edge when crossing

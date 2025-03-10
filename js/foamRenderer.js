@@ -251,12 +251,13 @@ class FoamRenderer {
             
             vertices.push(x, y, 0);
             
-            // Color based on velocity
-            const velocityFactor = Math.min(1, Math.abs(flow.velocity) / 2);
+            // Color based on velocity direction
+            const velocityDirection = Math.sign(flow.velocity);
+            // Blue-ish for negative velocity, red-ish for positive
             particleColor.setRGB(
-                this.flowParticleColor.r * (1 - velocityFactor) + velocityFactor,
-                this.flowParticleColor.g * (1 - velocityFactor),
-                this.flowParticleColor.b * (1 - velocityFactor)
+                velocityDirection > 0 ? 1.0 : 0.3,  // More red for positive direction
+                0.3,
+                velocityDirection < 0 ? 1.0 : 0.3   // More blue for negative direction
             );
             
             colors.push(particleColor.r, particleColor.g, particleColor.b);
@@ -265,8 +266,9 @@ class FoamRenderer {
         geometry.setAttribute('position', new THREE.Float32BufferAttribute(vertices, 3));
         geometry.setAttribute('color', new THREE.Float32BufferAttribute(colors, 3));
         
-        // Update particle material to use vertex colors
+        // Update particle material to use vertex colors and make particles larger
         this.particleMaterial.vertexColors = true;
+        this.particleMaterial.size = 5;  // Larger particles for better visibility
         
         this.flowParticles = new THREE.Points(geometry, this.particleMaterial);
         this.scene.add(this.flowParticles);
@@ -295,12 +297,13 @@ class FoamRenderer {
             positions[i * 3] = x;
             positions[i * 3 + 1] = y;
             
-            // Update color based on velocity
-            const velocityFactor = Math.min(1, Math.abs(flow.velocity) / 2);
+            // Color based on velocity direction
+            const velocityDirection = Math.sign(flow.velocity);
+            // Blue-ish for negative velocity, red-ish for positive
             particleColor.setRGB(
-                this.flowParticleColor.r * (1 - velocityFactor) + velocityFactor,
-                this.flowParticleColor.g * (1 - velocityFactor),
-                this.flowParticleColor.b * (1 - velocityFactor)
+                velocityDirection > 0 ? 1.0 : 0.3,  // More red for positive direction
+                0.3,
+                velocityDirection < 0 ? 1.0 : 0.3   // More blue for negative direction
             );
             
             colors[i * 3] = particleColor.r;
