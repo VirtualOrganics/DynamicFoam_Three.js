@@ -67,20 +67,26 @@ class DynamicFoamApp {
     animate(time) {
         requestAnimationFrame(this.animate.bind(this));
         
-        if (!this.isRunning) return;
+        if (!this.isRunning) {
+            this.renderer.render();
+            return;
+        }
         
         // Calculate time delta
         if (!time) time = 0;
-        const deltaTime = (time - this.lastTime) / 1000; // in seconds
+        const deltaTime = Math.min((time - this.lastTime) / 1000, 0.05); // Cap at 50ms to avoid large jumps
         this.lastTime = time;
         
-        // Skip if deltaTime is too large (e.g., after tab switch)
-        if (deltaTime > 0.1) return;
+        // Skip if deltaTime is too small
+        if (deltaTime < 0.001) {
+            this.renderer.render();
+            return;
+        }
         
         // Update foam simulation
         this.foam.update(deltaTime);
         
-        // Update visualizations
+        // Update visualizations - both flow particles and foam edges
         this.updateFlowParticles();
         this.updateFoamEdges();
         

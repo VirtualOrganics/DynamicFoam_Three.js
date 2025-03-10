@@ -173,13 +173,8 @@ class FoamRenderer {
             
             vertices.push(x, y, 0);
             
-            // Color based on velocity
-            const velocityFactor = Math.min(1, Math.abs(flow.velocity) / 2);
-            particleColor.setRGB(
-                this.flowParticleColor.r * (1 - velocityFactor) + velocityFactor,
-                this.flowParticleColor.g * (1 - velocityFactor),
-                this.flowParticleColor.b * (1 - velocityFactor)
-            );
+            // Color based on velocity - use original flow particle color, but brighten for visibility
+            particleColor.set(this.flowParticleColor);
             
             colors.push(particleColor.r, particleColor.g, particleColor.b);
         }
@@ -187,8 +182,9 @@ class FoamRenderer {
         geometry.setAttribute('position', new THREE.Float32BufferAttribute(vertices, 3));
         geometry.setAttribute('color', new THREE.Float32BufferAttribute(colors, 3));
         
-        // Update particle material to use vertex colors
+        // Make particles larger and use vertex colors
         this.particleMaterial.vertexColors = true;
+        this.particleMaterial.size = 8; // Make particles larger for better visibility
         
         this.flowParticles = new THREE.Points(geometry, this.particleMaterial);
         this.scene.add(this.flowParticles);
@@ -210,20 +206,16 @@ class FoamRenderer {
             const from = centers[edge.from];
             const to = centers[edge.to];
             
-            // Update position
+            // Update particle position along edge
             const x = from[0] + (to[0] - from[0]) * flow.position;
             const y = from[1] + (to[1] - from[1]) * flow.position;
             
             positions[i * 3] = x;
             positions[i * 3 + 1] = y;
+            positions[i * 3 + 2] = 0;
             
-            // Update color based on velocity
-            const velocityFactor = Math.min(1, Math.abs(flow.velocity) / 2);
-            particleColor.setRGB(
-                this.flowParticleColor.r * (1 - velocityFactor) + velocityFactor,
-                this.flowParticleColor.g * (1 - velocityFactor),
-                this.flowParticleColor.b * (1 - velocityFactor)
-            );
+            // Update color - use original flow particle color, but brighten for visibility
+            particleColor.set(this.flowParticleColor);
             
             colors[i * 3] = particleColor.r;
             colors[i * 3 + 1] = particleColor.g;
