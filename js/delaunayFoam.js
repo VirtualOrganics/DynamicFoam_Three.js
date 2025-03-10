@@ -15,32 +15,21 @@ class DelaunayFoam {
         this.points = [];
         this.delaunay = null;
         
-        // Delaunay and Voronoi structures
-        this.triangleCenters = [];         // Voronoi vertices
-        this.delaunayEdges = [];           // Maps [pointIndex1, pointIndex2] => edgeIndex
-        this.voronoiEdges = [];            // Stores from/to triangle centers and the corresponding delaunay edge
-        this.triangleAdjacency = [];       // For each triangle, lists adjacent triangles
-        this.foamFlows = [];               // Particles flowing on Voronoi edges
+        // Foam structures
+        this.triangleCenters = [];
+        this.foamEdges = [];
+        this.foamFlows = [];
         
         // Center type (circumcenter, barycenter, incenter)
-        this.centerType = 'barycenter';
+        this.centerType = 'circumcenter';
         
         // Dynamics parameters
-        this.flowSpeed = 1.0;              // Increased from 0.5 to 1.0
-        this.flowStrength = 0.02;          // Increased from 0.01 to 0.02
+        this.flowSpeed = 0.5;
+        this.flowStrength = 0.01;
         this.expansionThreshold = 0.5;
         this.contractionFactor = 0.95;
         this.expansionFactor = 1.05;
         this.equilibriumDistance = 50;
-        this.restructureThreshold = 0.05;  // Threshold for re-triangulation
-        
-        // System stability parameters
-        this.maxPointMovement = 10;        // Limit how far a point can move in one step
-        this.boundaryPadding = 50;         // Keep points within boundaries
-        
-        // Performance optimization
-        this.bufferFrames = 5;             // Only re-triangulate every N frames
-        this.frameCount = 0;
         
         // Initialize points and triangulation
         this.initPoints();
@@ -63,81 +52,10 @@ class DelaunayFoam {
     }
     
     /**
-     * Perform Delaunay triangulation on the points and compute edge relationships
+     * Perform Delaunay triangulation on the points
      */
     triangulate() {
-        // Perform basic Delaunay triangulation
         this.delaunay = new Delaunator(this.points);
-        
-        // Calculate triangle adjacency - for each triangle, which triangles share an edge with it
-        this.calculateTriangleAdjacency();
-        
-        // Calculate Delaunay edges from triangulation
-        this.calculateDelaunayEdges();
-    }
-    
-    /**
-     * Calculate adjacency information for each triangle
-     */
-    calculateTriangleAdjacency() {
-        const numTriangles = this.delaunay.triangles.length / 3;
-        this.triangleAdjacency = new Array(numTriangles).fill(0).map(() => []);
-        
-        // Use halfedges to determine adjacency
-        for (let i = 0; i < this.delaunay.halfedges.length; i++) {
-            const opposite = this.delaunay.halfedges[i];
-            if (opposite >= 0) {
-                const triangle = Math.floor(i / 3);
-                const adjacentTriangle = Math.floor(opposite / 3);
-                this.triangleAdjacency[triangle].push(adjacentTriangle);
-            }
-        }
-    }
-    
-    /**
-     * Calculate all Delaunay edges from the triangulation
-     */
-    calculateDelaunayEdges() {
-        const seen = new Set();
-        this.delaunayEdges = [];
-        
-        // Process all triangles to find edges
-        for (let t = 0; t < this.delaunay.triangles.length / 3; t++) {
-            const i0 = this.delaunay.triangles[3 * t];
-            const i1 = this.delaunay.triangles[3 * t + 1];
-            const i2 = this.delaunay.triangles[3 * t + 2];
-            
-            // Add each edge if not already seen
-            this.addDelaunayEdgeIfNew(i0, i1, seen);
-            this.addDelaunayEdgeIfNew(i1, i2, seen);
-            this.addDelaunayEdgeIfNew(i2, i0, seen);
-        }
-    }
-    
-    /**
-     * Helper to add a Delaunay edge if it hasn't been added yet
-     */
-    addDelaunayEdgeIfNew(p1, p2, seen) {
-        // Ensure consistent ordering (smaller index first)
-        const edge = p1 < p2 ? [p1, p2] : [p2, p1];
-        const edgeKey = `${edge[0]}-${edge[1]}`;
-        
-        if (!seen.has(edgeKey)) {
-            seen.add(edgeKey);
-            // Calculate current length of the edge
-            const x1 = this.points[2 * edge[0]];
-            const y1 = this.points[2 * edge[0] + 1];
-            const x2 = this.points[2 * edge[1]];
-            const y2 = this.points[2 * edge[1] + 1];
-            const length = Math.sqrt((x2 - x1) ** 2 + (y2 - y1) ** 2);
-            
-            this.delaunayEdges.push({
-                points: edge,
-                length: length,
-                flow: 0,
-                restLength: length  // Initial rest length is the current length
-            });
-        }
     }
     
     /**
@@ -210,16 +128,13 @@ class DelaunayFoam {
      * Create foam structure based on triangle centers
      */
     createFoam() {
-        // Clear existing structures
         this.triangleCenters = [];
-        this.voronoiEdges = [];
-        this.foamFlows = [];
         
         // Calculate centers for each triangle
-        for (let i = 0; i < this.delaunay.triangles.length / 3; i++) {
-            const a = this.delaunay.triangles[i * 3];
-            const b = this.delaunay.triangles[i * 3 + 1];
-            const c = this.delaunay.triangles[i * 3 + 2];
+        for (let i = 0; i < this.delaunay.triangles.length; i += 3) {
+            const a = this.delaunay.triangles[i];
+            const b = this.delaunay.triangles[i + 1];
+            const c = this.delaunay.triangles[i + 2];
             
             // Calculate center based on selected type
             let center;
@@ -234,87 +149,43 @@ class DelaunayFoam {
             this.triangleCenters.push(center);
         }
         
-        // Generate Voronoi edges and map to Delaunay edges
-        this.generateVoronoiEdges();
+        // Generate foam edges by connecting adjacent triangle centers
+        this.generateFoamEdges();
         
         // Initialize flows on edges
         this.initializeFlows();
     }
     
     /**
-     * Generate Voronoi edges by connecting adjacent triangle centers and map to Delaunay edges
+     * Generate foam edges by connecting adjacent triangle centers
      */
-    generateVoronoiEdges() {
-        this.voronoiEdges = [];
+    generateFoamEdges() {
+        this.foamEdges = [];
+        const halfedges = this.delaunay.halfedges;
         
-        // Use triangleAdjacency to create Voronoi edges
-        for (let t = 0; t < this.triangleAdjacency.length; t++) {
-            for (let adjIdx = 0; adjIdx < this.triangleAdjacency[t].length; adjIdx++) {
-                const adjT = this.triangleAdjacency[t][adjIdx];
+        for (let i = 0; i < this.delaunay.triangles.length / 3; i++) {
+            for (let j = 0; j < 3; j++) {
+                const edgeIndex = 3 * i + j;
+                const oppositeEdge = halfedges[edgeIndex];
                 
-                // Only process each edge once (when t < adjT)
-                if (t < adjT) {
-                    // Find the shared edge between these triangles
-                    const sharedPoints = this.findSharedPoints(t, adjT);
-                    
-                    if (sharedPoints.length === 2) {
-                        // Find corresponding Delaunay edge
-                        const [p1, p2] = sharedPoints[0] < sharedPoints[1] ? 
-                                        [sharedPoints[0], sharedPoints[1]] : 
-                                        [sharedPoints[1], sharedPoints[0]];
-                        
-                        const delaunayEdgeIdx = this.findDelaunayEdgeIndex(p1, p2);
-                        
-                        if (delaunayEdgeIdx !== -1) {
-                            // Create Voronoi edge
-                            this.voronoiEdges.push({
-                                from: t,
-                                to: adjT,
-                                delaunayEdge: delaunayEdgeIdx,
-                                flow: 0,
-                                length: this.calculateDistance(
-                                    this.triangleCenters[t],
-                                    this.triangleCenters[adjT]
-                                )
-                            });
-                        }
-                    }
-                }
+                // Skip if we've already processed this edge or it's an external edge
+                if (oppositeEdge === -1 || oppositeEdge < edgeIndex) continue;
+                
+                const triangleA = i;
+                const triangleB = Math.floor(oppositeEdge / 3);
+                
+                // Add the edge between the centers of these triangles
+                this.foamEdges.push({
+                    from: triangleA,
+                    to: triangleB,
+                    flow: 0,
+                    length: this.calculateDistance(
+                        this.triangleCenters[triangleA],
+                        this.triangleCenters[triangleB]
+                    )
+                });
             }
         }
-    }
-    
-    /**
-     * Find the index of the Delaunay edge between two points
-     */
-    findDelaunayEdgeIndex(p1, p2) {
-        for (let i = 0; i < this.delaunayEdges.length; i++) {
-            const edge = this.delaunayEdges[i].points;
-            if ((edge[0] === p1 && edge[1] === p2) || 
-                (edge[0] === p2 && edge[1] === p1)) {
-                return i;
-            }
-        }
-        return -1;
-    }
-    
-    /**
-     * Find shared points between two triangles
-     */
-    findSharedPoints(triangleA, triangleB) {
-        const triA = [
-            this.delaunay.triangles[triangleA * 3],
-            this.delaunay.triangles[triangleA * 3 + 1],
-            this.delaunay.triangles[triangleA * 3 + 2]
-        ];
-        
-        const triB = [
-            this.delaunay.triangles[triangleB * 3],
-            this.delaunay.triangles[triangleB * 3 + 1],
-            this.delaunay.triangles[triangleB * 3 + 2]
-        ];
-        
-        return triA.filter(point => triB.includes(point));
     }
     
     /**
@@ -325,13 +196,11 @@ class DelaunayFoam {
     }
     
     /**
-     * Initialize flows on Voronoi edges
+     * Initialize flows on all edges to zero
      */
     initializeFlows() {
         this.foamFlows = [];
-        
-        // One flow particle per edge
-        for (let i = 0; i < this.voronoiEdges.length; i++) {
+        for (let i = 0; i < this.foamEdges.length; i++) {
             this.foamFlows.push({
                 position: 0.5, // Start in middle of edge
                 velocity: this.flowSpeed * (Math.random() > 0.5 ? 1 : -1), // Use consistent speed with random direction
@@ -358,97 +227,59 @@ class DelaunayFoam {
      * Updates the simulation by one step
      */
     update(deltaTime) {
-        // Update flows along Voronoi edges
+        // Update flows along edges
         this.updateFlows(deltaTime);
         
-        // Transfer flow from Voronoi edges to Delaunay edges
-        this.transferVoronoiFlowToDelaunay();
-        
-        // Update Delaunay points based on edge flows
-        const significant = this.updateDelaunayPoints(deltaTime);
-        
-        // Only re-triangulate if points moved significantly or buffer frames reached
-        this.frameCount++;
-        if (significant || this.frameCount >= this.bufferFrames) {
-            this.triangulate();
-            this.createFoam();
-            this.frameCount = 0;
-        }
+        // Update foam structure based on flows
+        this.updateFoamStructure();
     }
     
     /**
-     * Update particle flows along Voronoi edges
+     * Update particle flows along edges
      */
     updateFlows(deltaTime) {
         for (let i = 0; i < this.foamFlows.length; i++) {
             const flow = this.foamFlows[i];
-            const edge = this.voronoiEdges[flow.edge];
+            const edge = this.foamEdges[flow.edge];
+            
+            // Update velocity based on flowSpeed parameter (keep direction, update magnitude)
+            flow.velocity = Math.sign(flow.velocity) * this.flowSpeed;
             
             // Previous position (to detect crossing an edge)
             const prevPosition = flow.position;
             
-            // Update position using the current flowSpeed parameter
-            // Scale the flow velocity by flowSpeed to control how fast particles move
-            flow.velocity = Math.sign(flow.velocity) * this.flowSpeed;
+            // Update position
             flow.position += flow.velocity * deltaTime;
-            
-            // Check if particle reaches the end of an edge
-            if (flow.position >= 1.0) {
-                // Wrap around to the beginning
-                flow.position = 0.0;
-            } else if (flow.position < 0.0) {
-                // Wrap around to the end
-                flow.position = 1.0;
-            }
-            
-            // Check if particle crosses or hits the Delaunay edge
-            const crossedMiddle = (prevPosition < 0.5 && flow.position >= 0.5) || 
-                                 (prevPosition >= 0.5 && flow.position < 0.5);
-                                  
-            if (crossedMiddle && edge.delaunayEdge !== undefined) {
-                // Apply contraction to the corresponding Delaunay edge when crossing
-                this.delaunayEdges[edge.delaunayEdge].flow += this.flowStrength * 2;
-                
-                // Visual feedback that we're affecting the Delaunay edge
-                edge.flow += this.flowStrength * 0.5;
-            }
             
             // If reached end of edge, move to next edge
             if (flow.position <= 0 || flow.position >= 1) {
-                // Add flow to current edge when reaching an endpoint
+                // Add flow to current edge
                 edge.flow += this.flowStrength;
                 
                 // Determine which vertex we've hit (from or to)
                 const vertex = flow.position <= 0 ? edge.from : edge.to;
                 
-                // Find all Voronoi edges connected to this vertex
-                const connectedEdges = [];
-                for (let j = 0; j < this.voronoiEdges.length; j++) {
-                    if (j !== flow.edge && 
-                        (this.voronoiEdges[j].from === vertex || 
-                         this.voronoiEdges[j].to === vertex)) {
-                        connectedEdges.push(j);
-                    }
-                }
+                // Find all edges connected to this vertex
+                const connectedEdges = this.foamEdges.filter((e, idx) => 
+                    (e.from === vertex || e.to === vertex) && idx !== flow.edge
+                );
                 
                 if (connectedEdges.length > 0) {
                     // Pick a random connected edge
-                    const nextEdgeIdx = Math.floor(Math.random() * connectedEdges.length);
-                    const nextEdge = connectedEdges[nextEdgeIdx];
-                    flow.edge = nextEdge;
+                    const nextEdge = Math.floor(Math.random() * connectedEdges.length);
+                    flow.edge = this.foamEdges.indexOf(connectedEdges[nextEdge]);
                     
-                    // Set position at the correct end of the new edge
-                    const newEdge = this.voronoiEdges[nextEdge];
-                    flow.position = newEdge.from === vertex ? 0 : 1;
+                    // Set position at the right end of the new edge
+                    flow.position = connectedEdges[nextEdge].from === vertex ? 0 : 1;
                     
-                    // Adjust velocity direction based on new position
-                    if (flow.position === 0) {
-                        flow.velocity = Math.abs(flow.velocity); // Move from 0 toward 1
-                    } else {
-                        flow.velocity = -Math.abs(flow.velocity); // Move from 1 toward 0
+                    // Adjust velocity direction
+                    if ((flow.position === 0 && flow.velocity < 0) || 
+                        (flow.position === 1 && flow.velocity > 0)) {
+                        flow.velocity = -flow.velocity;
                     }
                 } else {
-                    // If no connected edges (shouldn't happen in proper mesh), just bounce
+                    // If no connected edges (shouldn't happen in a proper mesh),
+                    // just bounce as before
                     flow.velocity = -flow.velocity;
                     flow.position = Math.max(0, Math.min(1, flow.position));
                 }
@@ -457,56 +288,22 @@ class DelaunayFoam {
     }
     
     /**
-     * Transfer flow from Voronoi edges to their corresponding Delaunay edges
-     * This is primarily for decaying flows and handling any remaining flow transfer
+     * Update foam structure based on flows
      */
-    transferVoronoiFlowToDelaunay() {
-        // Decay flows over time but maintain minimal flow for visualization
-        for (let i = 0; i < this.voronoiEdges.length; i++) {
-            if (this.voronoiEdges[i].flow > 0) {
-                this.voronoiEdges[i].flow *= 0.95;
-            }
-        }
-        
-        for (let i = 0; i < this.delaunayEdges.length; i++) {
-            if (this.delaunayEdges[i].flow > 0) {
-                this.delaunayEdges[i].flow *= 0.98;
-            }
-        }
-    }
-    
-    /**
-     * Update Delaunay points based on edge flows
-     * Returns true if significant changes occurred
-     */
-    updateDelaunayPoints(deltaTime) {
-        // Calculate point movements based on edge flows
-        const movements = new Array(this.points.length / 2).fill(0).map(() => [0, 0]);
-        let maxMovement = 0;
-        
-        // For each Delaunay edge with flow
-        for (let i = 0; i < this.delaunayEdges.length; i++) {
-            const edge = this.delaunayEdges[i];
-            
+    updateFoamStructure() {
+        // Adjust points based on edge flows
+        for (const edge of this.foamEdges) {
             // Skip edges with little flow
-            if (Math.abs(edge.flow) < 0.01) {
-                // Decay flow over time for all edges
-                edge.flow *= 0.99;
-                continue;
-            }
+            if (Math.abs(edge.flow) < 0.01) continue;
             
-            const [p1, p2] = edge.points;
+            const fromCenter = this.triangleCenters[edge.from];
+            const toCenter = this.triangleCenters[edge.to];
             
-            // Calculate current distance
-            const p1x = this.points[2 * p1];
-            const p1y = this.points[2 * p1 + 1];
-            const p2x = this.points[2 * p2];
-            const p2y = this.points[2 * p2 + 1];
-            
-            const currentDistance = Math.sqrt((p2x - p1x) ** 2 + (p2y - p1y) ** 2);
+            // Calculate distance between centers
+            const currentDistance = this.calculateDistance(fromCenter, toCenter);
             
             // Target distance based on flow
-            let targetDistance = edge.restLength; // Use rest length as base
+            let targetDistance = this.equilibriumDistance;
             
             if (edge.flow > this.expansionThreshold) {
                 // Expansion for high flow
@@ -516,48 +313,22 @@ class DelaunayFoam {
                 targetDistance *= this.contractionFactor;
             }
             
-            // Calculate force
-            const factor = (targetDistance / currentDistance - 1) * 0.1;
-            const dx = (p2x - p1x) * factor;
-            const dy = (p2y - p1y) * factor;
-            
-            // Accumulate movements
-            movements[p1][0] -= dx;
-            movements[p1][1] -= dy;
-            movements[p2][0] += dx;
-            movements[p2][1] += dy;
-            
-            // Track max movement for re-triangulation decision
-            const movementMagnitude = Math.sqrt(dx * dx + dy * dy);
-            maxMovement = Math.max(maxMovement, movementMagnitude);
-            
-            // Decay flow over time
-            edge.flow *= 0.95;
-        }
-        
-        // Apply movements to points with limits
-        for (let i = 0; i < movements.length; i++) {
-            // Limit maximum movement
-            const movementMagnitude = Math.sqrt(movements[i][0] ** 2 + movements[i][1] ** 2);
-            if (movementMagnitude > this.maxPointMovement) {
-                const scale = this.maxPointMovement / movementMagnitude;
-                movements[i][0] *= scale;
-                movements[i][1] *= scale;
+            // Move points towards target distance
+            if (Math.abs(currentDistance - targetDistance) > 0.1) {
+                const dx = toCenter[0] - fromCenter[0];
+                const dy = toCenter[1] - fromCenter[1];
+                const factor = (targetDistance / currentDistance - 1) * 0.1;
+                
+                // Move the points
+                fromCenter[0] -= dx * factor;
+                fromCenter[1] -= dy * factor;
+                toCenter[0] += dx * factor;
+                toCenter[1] += dy * factor;
             }
             
-            // Apply movement
-            this.points[2 * i] += movements[i][0];
-            this.points[2 * i + 1] += movements[i][1];
-            
-            // Keep points within boundaries
-            this.points[2 * i] = Math.max(-this.width/2 + this.boundaryPadding, 
-                              Math.min(this.width/2 - this.boundaryPadding, this.points[2 * i]));
-            this.points[2 * i + 1] = Math.max(-this.height/2 + this.boundaryPadding, 
-                                Math.min(this.height/2 - this.boundaryPadding, this.points[2 * i + 1]));
+            // Decay flow over time
+            edge.flow *= 0.99;
         }
-        
-        // Return whether significant movement occurred
-        return maxMovement > this.restructureThreshold;
     }
     
     /**
@@ -568,9 +339,8 @@ class DelaunayFoam {
             points: this.points,
             triangles: Array.from(this.delaunay.triangles),
             centers: this.triangleCenters,
-            edges: this.voronoiEdges,
-            flows: this.foamFlows,
-            delaunayEdges: this.delaunayEdges
+            edges: this.foamEdges,
+            flows: this.foamFlows
         };
     }
     

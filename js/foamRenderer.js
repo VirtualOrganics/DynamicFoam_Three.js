@@ -17,23 +17,20 @@ class FoamRenderer {
         this.controls = null;
         
         // Visualization objects
-        this.triangles = null;         // Delaunay triangulation
-        this.foamLines = null;         // Voronoi edges
-        this.flowParticles = null;     // Flow particles
-        this.delaunayLines = null;     // Delaunay edges
+        this.triangles = null;
+        this.foamLines = null;
+        this.flowParticles = null;
         
         // Materials
         this.triangleMaterial = null;
         this.lineMaterial = null;
         this.particleMaterial = null;
-        this.delaunayMaterial = null;
         
         // Colors
         this.backgroundColor = new THREE.Color(0x111111);
-        this.triangleColor = new THREE.Color(0x444444);
+        this.triangleColor = new THREE.Color(0x222222);
         this.foamLineColor = new THREE.Color(0x2288ff);
         this.flowParticleColor = new THREE.Color(0xff8822);
-        this.delaunayLineColor = new THREE.Color(0x7a7a7a);
         
         // Initialize
         this.init();
@@ -81,13 +78,6 @@ class FoamRenderer {
             sizeAttenuation: true
         });
         
-        this.delaunayMaterial = new THREE.LineBasicMaterial({
-            color: this.delaunayLineColor,
-            linewidth: 1,
-            transparent: true,
-            opacity: 0.7
-        });
-        
         // Handle window resize
         window.addEventListener('resize', this.onWindowResize.bind(this));
     }
@@ -106,18 +96,14 @@ class FoamRenderer {
      */
     updateFoamData(foamData) {
         // Remove previous objects
-        if (this.triangles) {
-            this.scene.remove(this.triangles);
-            this.triangles = null; // Set to null to ensure it's not referenced
-        }
+        if (this.triangles) this.scene.remove(this.triangles);
         if (this.foamLines) this.scene.remove(this.foamLines);
         if (this.flowParticles) this.scene.remove(this.flowParticles);
-        if (this.delaunayLines) this.scene.remove(this.delaunayLines);
         
-        // Create delaunay edges visualization
-        this.createDelaunayEdges(foamData.points, foamData.delaunayEdges);
+        // Create triangulation visualization
+        this.createTriangulation(foamData.points, foamData.triangles);
         
-        // Create foam edges (Voronoi)
+        // Create foam edges
         this.createFoamEdges(foamData.centers, foamData.edges);
         
         // Create flow particles
@@ -144,52 +130,7 @@ class FoamRenderer {
     }
     
     /**
-     * Create visualization of Delaunay edges
-     */
-    createDelaunayEdges(points, delaunayEdges) {
-        const geometry = new THREE.BufferGeometry();
-        
-        // Create line segments from Delaunay edges
-        const vertices = [];
-        for (const edge of delaunayEdges) {
-            const p1 = edge.points[0];
-            const p2 = edge.points[1];
-            
-            vertices.push(
-                points[2 * p1], points[2 * p1 + 1], 0,
-                points[2 * p2], points[2 * p2 + 1], 0
-            );
-        }
-        
-        geometry.setAttribute('position', new THREE.Float32BufferAttribute(vertices, 3));
-        
-        // Create line colors based on flow
-        const colors = [];
-        for (const edge of delaunayEdges) {
-            // Color intensity based on flow
-            const flowIntensity = Math.min(1, Math.abs(edge.flow) * 10);
-            const color = new THREE.Color(this.delaunayLineColor);
-            color.lerp(new THREE.Color(0xff0000), flowIntensity);
-            
-            colors.push(color.r, color.g, color.b);
-            colors.push(color.r, color.g, color.b);
-        }
-        
-        geometry.setAttribute('color', new THREE.Float32BufferAttribute(colors, 3));
-        
-        const material = new THREE.LineBasicMaterial({
-            vertexColors: true,
-            linewidth: 1,
-            transparent: true,
-            opacity: 0.7
-        });
-        
-        this.delaunayLines = new THREE.LineSegments(geometry, material);
-        this.scene.add(this.delaunayLines);
-    }
-    
-    /**
-     * Create visualization of foam edges (Voronoi edges)
+     * Create visualization of foam edges
      */
     createFoamEdges(centers, edges) {
         const geometry = new THREE.BufferGeometry();
@@ -206,26 +147,7 @@ class FoamRenderer {
         
         geometry.setAttribute('position', new THREE.Float32BufferAttribute(vertices, 3));
         
-        // Create line colors based on flow
-        const colors = [];
-        for (const edge of edges) {
-            // Color intensity based on flow
-            const flowIntensity = Math.min(1, Math.abs(edge.flow) * 10);
-            const color = new THREE.Color(this.foamLineColor);
-            color.lerp(new THREE.Color(0x00ffff), flowIntensity);
-            
-            colors.push(color.r, color.g, color.b);
-            colors.push(color.r, color.g, color.b);
-        }
-        
-        geometry.setAttribute('color', new THREE.Float32BufferAttribute(colors, 3));
-        
-        const material = new THREE.LineBasicMaterial({
-            vertexColors: true,
-            linewidth: 1
-        });
-        
-        this.foamLines = new THREE.LineSegments(geometry, material);
+        this.foamLines = new THREE.LineSegments(geometry, this.lineMaterial);
         this.scene.add(this.foamLines);
     }
     
@@ -251,13 +173,12 @@ class FoamRenderer {
             
             vertices.push(x, y, 0);
             
-            // Color based on velocity direction
-            const velocityDirection = Math.sign(flow.velocity);
-            // Blue-ish for negative velocity, red-ish for positive
+            // Color based on velocity
+            const velocityFactor = Math.min(1, Math.abs(flow.velocity) / 2);
             particleColor.setRGB(
-                velocityDirection > 0 ? 1.0 : 0.3,  // More red for positive direction
-                0.3,
-                velocityDirection < 0 ? 1.0 : 0.3   // More blue for negative direction
+                this.flowParticleColor.r * (1 - velocityFactor) + velocityFactor,
+                this.flowParticleColor.g * (1 - velocityFactor),
+                this.flowParticleColor.b * (1 - velocityFactor)
             );
             
             colors.push(particleColor.r, particleColor.g, particleColor.b);
@@ -266,9 +187,8 @@ class FoamRenderer {
         geometry.setAttribute('position', new THREE.Float32BufferAttribute(vertices, 3));
         geometry.setAttribute('color', new THREE.Float32BufferAttribute(colors, 3));
         
-        // Update particle material to use vertex colors and make particles larger
+        // Update particle material to use vertex colors
         this.particleMaterial.vertexColors = true;
-        this.particleMaterial.size = 5;  // Larger particles for better visibility
         
         this.flowParticles = new THREE.Points(geometry, this.particleMaterial);
         this.scene.add(this.flowParticles);
@@ -297,13 +217,12 @@ class FoamRenderer {
             positions[i * 3] = x;
             positions[i * 3 + 1] = y;
             
-            // Color based on velocity direction
-            const velocityDirection = Math.sign(flow.velocity);
-            // Blue-ish for negative velocity, red-ish for positive
+            // Update color based on velocity
+            const velocityFactor = Math.min(1, Math.abs(flow.velocity) / 2);
             particleColor.setRGB(
-                velocityDirection > 0 ? 1.0 : 0.3,  // More red for positive direction
-                0.3,
-                velocityDirection < 0 ? 1.0 : 0.3   // More blue for negative direction
+                this.flowParticleColor.r * (1 - velocityFactor) + velocityFactor,
+                this.flowParticleColor.g * (1 - velocityFactor),
+                this.flowParticleColor.b * (1 - velocityFactor)
             );
             
             colors[i * 3] = particleColor.r;
@@ -316,13 +235,12 @@ class FoamRenderer {
     }
     
     /**
-     * Update foam edges (Voronoi) visualization when foam structure changes
+     * Update foam edges visualization when foam structure changes
      */
     updateFoamEdges(centers, edges) {
         if (!this.foamLines) return;
         
         const positions = this.foamLines.geometry.attributes.position.array;
-        const colors = this.foamLines.geometry.attributes.color.array;
         
         for (let i = 0; i < edges.length; i++) {
             const edge = edges[i];
@@ -334,59 +252,9 @@ class FoamRenderer {
             positions[i * 6 + 1] = from[1];
             positions[i * 6 + 3] = to[0];
             positions[i * 6 + 4] = to[1];
-            
-            // Update color based on flow
-            const flowIntensity = Math.min(1, Math.abs(edge.flow) * 10);
-            const color = new THREE.Color(this.foamLineColor);
-            color.lerp(new THREE.Color(0x00ffff), flowIntensity);
-            
-            colors[i * 6] = color.r;
-            colors[i * 6 + 1] = color.g;
-            colors[i * 6 + 2] = color.b;
-            colors[i * 6 + 3] = color.r;
-            colors[i * 6 + 4] = color.g;
-            colors[i * 6 + 5] = color.b;
         }
         
         this.foamLines.geometry.attributes.position.needsUpdate = true;
-        this.foamLines.geometry.attributes.color.needsUpdate = true;
-    }
-    
-    /**
-     * Update Delaunay edges visualization
-     */
-    updateDelaunayEdges(points, delaunayEdges) {
-        if (!this.delaunayLines) return;
-        
-        const positions = this.delaunayLines.geometry.attributes.position.array;
-        const colors = this.delaunayLines.geometry.attributes.color.array;
-        
-        for (let i = 0; i < delaunayEdges.length; i++) {
-            const edge = delaunayEdges[i];
-            const p1 = edge.points[0];
-            const p2 = edge.points[1];
-            
-            // Update line segment vertices
-            positions[i * 6] = points[2 * p1];
-            positions[i * 6 + 1] = points[2 * p1 + 1];
-            positions[i * 6 + 3] = points[2 * p2];
-            positions[i * 6 + 4] = points[2 * p2 + 1];
-            
-            // Update color based on flow
-            const flowIntensity = Math.min(1, Math.abs(edge.flow) * 10);
-            const color = new THREE.Color(this.delaunayLineColor);
-            color.lerp(new THREE.Color(0xff0000), flowIntensity);
-            
-            colors[i * 6] = color.r;
-            colors[i * 6 + 1] = color.g;
-            colors[i * 6 + 2] = color.b;
-            colors[i * 6 + 3] = color.r;
-            colors[i * 6 + 4] = color.g;
-            colors[i * 6 + 5] = color.b;
-        }
-        
-        this.delaunayLines.geometry.attributes.position.needsUpdate = true;
-        this.delaunayLines.geometry.attributes.color.needsUpdate = true;
     }
     
     /**
@@ -419,32 +287,6 @@ class FoamRenderer {
         if (options.flowParticles) {
             this.flowParticleColor.set(options.flowParticles);
             // Note: this doesn't affect existing particles until updateFlowParticles is called
-        }
-        
-        if (options.delaunayLines) {
-            this.delaunayLineColor.set(options.delaunayLines);
-            this.delaunayMaterial.color = this.delaunayLineColor;
-        }
-    }
-    
-    /**
-     * Toggle visibility of different components
-     */
-    setVisibility(options) {
-        if (this.triangles && options.showTriangulation !== undefined) {
-            this.triangles.visible = options.showTriangulation;
-        }
-        
-        if (this.foamLines && options.showFoamEdges !== undefined) {
-            this.foamLines.visible = options.showFoamEdges;
-        }
-        
-        if (this.flowParticles && options.showFlowParticles !== undefined) {
-            this.flowParticles.visible = options.showFlowParticles;
-        }
-        
-        if (this.delaunayLines && options.showDelaunayEdges !== undefined) {
-            this.delaunayLines.visible = options.showDelaunayEdges;
         }
     }
 }

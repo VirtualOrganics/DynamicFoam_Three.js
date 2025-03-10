@@ -22,7 +22,6 @@ class DynamicFoamApp {
         // Animation properties
         this.lastTime = 0;
         this.isRunning = true;
-        this.lastDebugTime = 0;
         
         // Initial render
         this.updateRenderer();
@@ -40,28 +39,25 @@ class DynamicFoamApp {
     }
     
     /**
-     * Update all visualization components
+     * Update flow particle visualization
      */
-    updateVisualizations() {
+    updateFlowParticles() {
         const foamData = this.foam.getGeometryData();
-        
-        // Update flow particles
         this.renderer.updateFlowParticles(
             foamData.centers,
             foamData.edges,
             foamData.flows
         );
-        
-        // Update foam edges (Voronoi)
+    }
+    
+    /**
+     * Update foam edges visualization
+     */
+    updateFoamEdges() {
+        const foamData = this.foam.getGeometryData();
         this.renderer.updateFoamEdges(
             foamData.centers,
             foamData.edges
-        );
-        
-        // Update Delaunay edges
-        this.renderer.updateDelaunayEdges(
-            foamData.points,
-            foamData.delaunayEdges
         );
     }
     
@@ -71,27 +67,22 @@ class DynamicFoamApp {
     animate(time) {
         requestAnimationFrame(this.animate.bind(this));
         
-        if (!this.isRunning) {
-            this.renderer.render();
-            return;
-        }
+        if (!this.isRunning) return;
         
         // Calculate time delta
         if (!time) time = 0;
-        const deltaTime = Math.min((time - this.lastTime) / 1000, 0.05); // Cap at 50ms to avoid large jumps
+        const deltaTime = (time - this.lastTime) / 1000; // in seconds
         this.lastTime = time;
         
-        // Skip if deltaTime is too small
-        if (deltaTime < 0.001) {
-            this.renderer.render();
-            return;
-        }
+        // Skip if deltaTime is too large (e.g., after tab switch)
+        if (deltaTime > 0.1) return;
         
         // Update foam simulation
         this.foam.update(deltaTime);
         
         // Update visualizations
-        this.updateVisualizations();
+        this.updateFlowParticles();
+        this.updateFoamEdges();
         
         // Render scene
         this.renderer.render();

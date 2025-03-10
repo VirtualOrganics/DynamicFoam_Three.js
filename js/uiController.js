@@ -22,9 +22,9 @@ class UIController {
             equilibriumDistance: foam.equilibriumDistance,
             
             // Visualization parameters
-            showDelaunayEdges: true,     // The backbone of our model
-            showFoamEdges: true,         // Voronoi edges
-            showFlowParticles: true,     // Flow particles
+            showTriangulation: true,
+            showFoamEdges: true,
+            showFlowParticles: true,
             
             // Actions
             isRunning: true,
@@ -100,30 +100,35 @@ class UIController {
             });
         
         // Visualization parameters
-        visualizationFolder.add(this.params, 'showDelaunayEdges')
-            .name('Show Delaunay Edges')
+        visualizationFolder.add(this.params, 'showTriangulation')
+            .name('Show Triangulation')
             .onChange(value => {
-                // Only show Delaunay edges, not triangulation
-                this.renderer.setVisibility({ showDelaunayEdges: value });
+                if (this.renderer.triangles) {
+                    this.renderer.triangles.visible = value;
+                }
             });
         
         visualizationFolder.add(this.params, 'showFoamEdges')
-            .name('Show Voronoi Mesh')
+            .name('Show Foam Edges')
             .onChange(value => {
-                this.renderer.setVisibility({ showFoamEdges: value });
+                if (this.renderer.foamLines) {
+                    this.renderer.foamLines.visible = value;
+                }
             });
         
         visualizationFolder.add(this.params, 'showFlowParticles')
             .name('Show Flow Particles')
             .onChange(value => {
-                this.renderer.setVisibility({ showFlowParticles: value });
+                if (this.renderer.flowParticles) {
+                    this.renderer.flowParticles.visible = value;
+                }
             });
         
         // Color controls
         const colorParams = {
             backgroundColor: '#111111',
-            delaunayEdgesColor: '#7a7a7a',
-            voronoiMeshColor: '#2288ff',
+            trianglesColor: '#222222',
+            foamEdgesColor: '#2288ff',
             flowParticlesColor: '#ff8822'
         };
         
@@ -135,14 +140,14 @@ class UIController {
                 this.renderer.setColors({ background: value });
             });
         
-        colorFolder.addColor(colorParams, 'delaunayEdgesColor')
-            .name('Delaunay Edges')
+        colorFolder.addColor(colorParams, 'trianglesColor')
+            .name('Triangles')
             .onChange(value => {
-                this.renderer.setColors({ delaunayLines: value });
+                this.renderer.setColors({ triangles: value });
             });
         
-        colorFolder.addColor(colorParams, 'voronoiMeshColor')
-            .name('Voronoi Mesh')
+        colorFolder.addColor(colorParams, 'foamEdgesColor')
+            .name('Foam Edges')
             .onChange(value => {
                 this.renderer.setColors({ foamLines: value });
             });
