@@ -340,21 +340,21 @@ class DelaunayFoam {
      */
     initializeFlows() {
         this.flows = [];
-        this.lastReleaseTime = 0;
-        
-        // Create initial particles immediately
-        this.releaseParticles(0);
+        // Initial release will happen on first update
     }
     
     /**
      * Update the simulation
      */
     update(deltaTime) {
-        // Update time tracking
-        this.currentTime += deltaTime;
+        // Create initial particles if they don't exist
+        if (this.flows.length === 0) {
+            this.releaseParticles(0);
+        }
         
         // Check if it's time to release more particles
-        if (this.currentTime - this.lastReleaseTime >= this.particleReleaseInterval) {
+        this.currentTime += deltaTime;
+        if ((this.currentTime - this.lastReleaseTime) >= this.particleReleaseInterval) {
             this.releaseParticles(this.currentTime);
             this.lastReleaseTime = this.currentTime;
         }
@@ -378,38 +378,38 @@ class DelaunayFoam {
      * Update flow particles
      */
     updateFlows(deltaTime) {
-        // Process particles in reverse order so we can remove expired ones
+        // Update existing particles
         for (let i = this.flows.length - 1; i >= 0; i--) {
             const flow = this.flows[i];
             
             // Remove expired particles
-            if (this.currentTime - flow.birthTime > this.particleLifetime) {
+            if ((this.currentTime - flow.birthTime) > this.particleLifetime) {
                 this.flows.splice(i, 1);
                 continue;
             }
             
-            // Skip invalid particles
-            if (flow.edgeIndex < 0 || flow.edgeIndex >= this.voronoiEdges.length) {
-                this.flows.splice(i, 1);
-                continue;
-            }
-            
+            // Update position
             const edge = this.voronoiEdges[flow.edgeIndex];
             
-            // Move the particle along the edge
-            // direction: 1 = toward 'to', -1 = toward 'from'
-            flow.t += flow.direction * flow.velocity * deltaTime;
+            // Previous position (to detect crossing)
+            const prevPosition = flow.position;
             
-            // Check if particle reached an endpoint
-            if (flow.t <= 0 || flow.t >= 1) {
-                // Particle has reached end of edge - remove it
+            // Update position based on velocity
+            flow.position += flow.velocity * deltaTime;
+            
+            // Check if crossed midpoint (for contraction effect)
+            const crossedMiddle = (prevPosition < 0.5 && flow.position >= 0.5) || 
+                                 (prevPosition >= 0.5 && flow.position < 0.5);
+                                 
+            if (crossedMiddle && edge.delaunayEdge !== undefined) {
+                // Apply contraction to the corresponding Delaunay edge
+                this.delaunayEdges[edge.delaunayEdge].flow += this.flowStrength;
+            }
+            
+            // Check if particle reached the end of the edge
+            if (flow.position <= 0 || flow.position >= 1) {
+                // Remove particle that reached endpoint
                 this.flows.splice(i, 1);
-                
-                // Apply contraction effect at vertex
-                const vertexIndex = flow.t <= 0 ? edge.from : edge.to;
-                if (edge.delaunayEdge !== undefined) {
-                    this.delaunayEdges[edge.delaunayEdge].flow += this.flowStrength;
-                }
             }
         }
     }
@@ -423,38 +423,27 @@ class DelaunayFoam {
             return;
         }
         
-        let count = 0;
-        
-        // Create particles on EVERY edge
+        // Create particles on all edges
         for (let i = 0; i < this.voronoiEdges.length; i++) {
             const edge = this.voronoiEdges[i];
-            if (!this.triangleCenters[edge.from] || !this.triangleCenters[edge.to]) {
-                continue; // Skip invalid edges
-            }
             
-            // Create two particles per edge, moving outward from center
-            // First particle: from center toward 'from' vertex
+            // Create particles moving in opposite directions
+            // First particle: from middle toward endpoint
             this.flows.push({
                 edgeIndex: i,
-                t: 0.5,      // Start in the middle of the edge
-                velocity: 0.4, // Faster velocity for better visibility
-                direction: -1, // Toward 'from' vertex
+                position: 0.5,             // Start in the middle of the edge
+                velocity: this.flowSpeed,  // Moving toward 1
                 birthTime: currentTime
             });
             
-            // Second particle: from center toward 'to' vertex
+            // Second particle: from middle toward startpoint
             this.flows.push({
                 edgeIndex: i,
-                t: 0.5,      // Start in the middle of the edge
-                velocity: 0.4, // Faster velocity for better visibility
-                direction: 1,  // Toward 'to' vertex
+                position: 0.5,              // Start in the middle of the edge
+                velocity: -this.flowSpeed,  // Moving toward 0
                 birthTime: currentTime
             });
-            
-            count += 2;
         }
-        
-        console.log(`Released ${count} particles. Total: ${this.flows.length}`);
     }
     
     /**

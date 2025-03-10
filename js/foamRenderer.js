@@ -196,7 +196,7 @@ class FoamRenderer {
         // Create delaunay edges visualization
         this.createDelaunayEdges(foamData.points, foamData.delaunayEdges);
         
-        // Create foam edges (Voronoi)
+        // Create foam edges (Voronoi edges)
         this.createFoamEdges(foamData.centers, foamData.edges);
         
         // Create acute angle markers
@@ -328,6 +328,7 @@ class FoamRenderer {
         // Create a geometry for the particles
         const geometry = new THREE.BufferGeometry();
         const vertices = [];
+        const colors = [];
         
         for (const flow of flows) {
             if (flow.edgeIndex < 0 || flow.edgeIndex >= edges.length) {
@@ -342,13 +343,16 @@ class FoamRenderer {
                 continue;
             }
             
-            // Calculate position based on t parameter (0-1 along the edge)
-            const t = flow.t;
-            const x = from[0] + t * (to[0] - from[0]);
-            const y = from[1] + t * (to[1] - from[1]);
+            // Calculate position based on position parameter (0-1 along the edge)
+            const position = flow.position;
+            const x = from[0] + position * (to[0] - from[0]);
+            const y = from[1] + position * (to[1] - from[1]);
             
             // Add particle at calculated position with higher z-offset
             vertices.push(x, y, 2);
+            
+            // Always use red color for particles
+            colors.push(1.0, 0, 0);
         }
         
         if (vertices.length === 0) {
@@ -356,14 +360,14 @@ class FoamRenderer {
         }
         
         geometry.setAttribute('position', new THREE.Float32BufferAttribute(vertices, 3));
+        geometry.setAttribute('color', new THREE.Float32BufferAttribute(colors, 3));
         
         // Create a material for the particles
         const material = new THREE.PointsMaterial({
-            color: 0xffffff,    // Pure white
-            size: 10,           // Larger size for better visibility
-            sizeAttenuation: false, // Consistent size regardless of zoom
-            transparent: false,
-            alphaTest: 0.5      // Discard pixels with transparency below this threshold
+            size: 12,           // Large size for better visibility
+            vertexColors: true, // Use vertex colors defined above
+            sizeAttenuation: false,
+            transparent: false
         });
         
         this.flowParticles = new THREE.Points(geometry, material);
@@ -389,6 +393,7 @@ class FoamRenderer {
         
         // Update positions of existing particles
         const positions = this.flowParticles.geometry.attributes.position.array;
+        const colors = this.flowParticles.geometry.attributes.color.array;
         const particleCount = Math.min(flows.length, positions.length / 3);
         
         for (let i = 0; i < particleCount; i++) {
@@ -407,17 +412,23 @@ class FoamRenderer {
             }
             
             // Calculate new position
-            const t = flow.t;
-            const x = from[0] + t * (to[0] - from[0]);
-            const y = from[1] + t * (to[1] - from[1]);
+            const position = flow.position;
+            const x = from[0] + position * (to[0] - from[0]);
+            const y = from[1] + position * (to[1] - from[1]);
             
             // Update position
             positions[i * 3] = x;
             positions[i * 3 + 1] = y;
             positions[i * 3 + 2] = 2; // Keep z-offset consistent
+            
+            // Use red color
+            colors[i * 3] = 1.0;
+            colors[i * 3 + 1] = 0;
+            colors[i * 3 + 2] = 0;
         }
         
         this.flowParticles.geometry.attributes.position.needsUpdate = true;
+        this.flowParticles.geometry.attributes.color.needsUpdate = true;
     }
     
     /**
