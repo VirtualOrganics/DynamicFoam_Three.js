@@ -183,41 +183,15 @@ class FoamRenderer {
      * Update FoamData - override to check particle rendering
      */
     updateFoamData(foamData) {
-        // Store current particle visibility state
-        const particlesVisible = this.flowParticles ? this.flowParticles.visible : true;
-        
-        // Print debugging info about incoming data
-        console.log("updateFoamData called with:", {
-            pointsLength: foamData.points ? foamData.points.length : 0,
-            trianglesLength: foamData.triangles ? foamData.triangles.length : 0,
-            delaunayEdgesLength: foamData.delaunayEdges ? foamData.delaunayEdges.length : 0,
-            centersLength: foamData.centers ? foamData.centers.length : 0,
-            edgesLength: foamData.edges ? foamData.edges.length : 0,
-            flowsLength: foamData.flows ? foamData.flows.length : 0
-        });
-        
-        if (foamData.flows && foamData.flows.length > 0) {
-            // Log a sample flow for debugging
-            console.log("Sample flow:", JSON.stringify(foamData.flows[0]));
-        }
-        
-        // Remove previous objects except particles
+        // Remove previous objects
         if (this.triangles) {
             this.scene.remove(this.triangles);
-            this.triangles = null;
+            this.triangles = null; // Set to null to ensure it's not referenced
         }
-        if (this.foamLines) {
-            this.scene.remove(this.foamLines);
-            this.foamLines = null;
-        }
-        if (this.delaunayLines) {
-            this.scene.remove(this.delaunayLines);
-            this.delaunayLines = null;
-        }
-        if (this.acuteCorners) {
-            this.scene.remove(this.acuteCorners);
-            this.acuteCorners = null;
-        }
+        if (this.foamLines) this.scene.remove(this.foamLines);
+        if (this.flowParticles) this.scene.remove(this.flowParticles);
+        if (this.delaunayLines) this.scene.remove(this.delaunayLines);
+        if (this.acuteCorners) this.scene.remove(this.acuteCorners);
         
         // Create delaunay edges visualization
         this.createDelaunayEdges(foamData.points, foamData.delaunayEdges);
@@ -228,16 +202,8 @@ class FoamRenderer {
         // Create acute angle markers
         this.createAcuteCorners(foamData.centers, foamData.edges);
         
-        // Update flow particles (don't recreate unless necessary)
-        this.updateFlowParticles(foamData.centers, foamData.edges, foamData.flows);
-        
-        // Restore particle visibility
-        if (this.flowParticles) {
-            this.flowParticles.visible = particlesVisible;
-            console.log(`Particle visibility set to ${particlesVisible}, particle count: ${this.flowParticles.children ? this.flowParticles.children.length : 0}`);
-        } else {
-            console.warn("flowParticles is null after updateFlowParticles call");
-        }
+        // Create flow particles
+        this.createFlowParticles(foamData.centers, foamData.edges, foamData.flows);
     }
     
     /**
@@ -381,7 +347,7 @@ class FoamRenderer {
             const x = from[0] + t * (to[0] - from[0]);
             const y = from[1] + t * (to[1] - from[1]);
             
-            // Add particle at calculated position with z-offset
+            // Add particle at calculated position with higher z-offset
             vertices.push(x, y, 2);
         }
         
@@ -393,10 +359,11 @@ class FoamRenderer {
         
         // Create a material for the particles
         const material = new THREE.PointsMaterial({
-            color: 0xffffff,  // Pure white
-            size: 8,          // Large enough to be easily visible
+            color: 0xffffff,    // Pure white
+            size: 10,           // Larger size for better visibility
             sizeAttenuation: false, // Consistent size regardless of zoom
-            transparent: false
+            transparent: false,
+            alphaTest: 0.5      // Discard pixels with transparency below this threshold
         });
         
         this.flowParticles = new THREE.Points(geometry, material);

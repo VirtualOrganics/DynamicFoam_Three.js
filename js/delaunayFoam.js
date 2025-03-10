@@ -35,9 +35,9 @@ class DelaunayFoam {
         this.equilibriumDistance = 50;
         this.restructureThreshold = 0.05;  // Threshold for re-triangulation
         
-        // Particle management parameters - adjusted for better visibility
-        this.particleReleaseInterval = 0.5;  // Release particles more frequently
-        this.particleLifetime = 5.0;         // Shorter lifetime for better performance
+        // Particle management parameters
+        this.particleReleaseInterval = 1.0;  // Time between releasing new particles (in seconds)
+        this.particleLifetime = 5.0;         // How long particles live (in seconds)
         this.lastReleaseTime = 0;            // Tracks when we last released particles
         this.maxAngleForTraversal = Math.PI/2; // Maximum angle (90 degrees) for edge traversal
         
@@ -336,35 +336,36 @@ class DelaunayFoam {
     }
     
     /**
-     * Initialize flow particles
+     * Initialize flows - create initial particles
      */
     initializeFlows() {
         this.flows = [];
         this.lastReleaseTime = 0;
-        // Initial release will happen on first update
+        
+        // Create initial particles immediately
+        this.releaseParticles(0);
     }
     
     /**
      * Update the simulation
-     * @param {number} deltaTime - Time since last update in seconds
      */
     update(deltaTime) {
         // Update time tracking
         this.currentTime += deltaTime;
-
-        // Check if it's time to release new particles
+        
+        // Check if it's time to release more particles
         if (this.currentTime - this.lastReleaseTime >= this.particleReleaseInterval) {
             this.releaseParticles(this.currentTime);
             this.lastReleaseTime = this.currentTime;
         }
-
-        // Update existing particles and dynamics
+        
+        // Update existing particles
         this.updateFlows(deltaTime);
         
-        // Update point positions based on edge dynamics
+        // Update Delaunay points based on edge flows
         const significant = this.updateDelaunayPoints(deltaTime);
         
-        // Check if we need to re-triangulate
+        // Only re-triangulate if points moved significantly or buffer frames reached
         this.frameCount++;
         if (significant || this.frameCount >= this.bufferFrames) {
             this.triangulate();
@@ -375,7 +376,6 @@ class DelaunayFoam {
     
     /**
      * Update flow particles
-     * @param {number} deltaTime - Time since last update in seconds
      */
     updateFlows(deltaTime) {
         // Process particles in reverse order so we can remove expired ones
