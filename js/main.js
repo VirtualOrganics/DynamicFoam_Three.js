@@ -23,13 +23,8 @@ class DynamicFoamApp {
         this.lastTime = 0;
         this.isRunning = true;
         this.lastDebugTime = 0;
-        this.lastLogTime = 0;
         
         // Initial render
-        this.updateRenderer();
-        
-        // Ensure initial particles are created
-        this.foam.initializeFlows();
         this.updateRenderer();
         
         // Start animation loop
@@ -95,18 +90,28 @@ class DynamicFoamApp {
         // Update foam simulation
         this.foam.update(deltaTime);
         
-        // Debug logging every 2 seconds
-        if (Math.floor(time / 2000) !== Math.floor(this.lastLogTime / 2000)) {
-            const foamData = this.foam.getGeometryData();
-            console.log(`Active particles: ${foamData.flows.length}`);
-            this.lastLogTime = time;
-        }
-        
         // Update visualizations
         this.updateVisualizations();
         
         // Render scene
         this.renderer.render();
+        
+        // Debug logging (every 3 seconds)
+        if (Math.floor(time / 3000) !== Math.floor(this.lastDebugTime / 3000)) {
+            // Get a random flow particle to check its properties
+            const foamData = this.foam.getGeometryData();
+            if (foamData.flows.length > 0) {
+                const randomFlow = foamData.flows[Math.floor(Math.random() * foamData.flows.length)];
+                console.log('Flow diagnostic:', {
+                    position: randomFlow.position,
+                    velocity: randomFlow.velocity,
+                    edgeIndex: randomFlow.edge,
+                    totalFlows: foamData.flows.length,
+                    totalEdges: foamData.edges.length
+                });
+            }
+            this.lastDebugTime = time;
+        }
     }
     
     /**

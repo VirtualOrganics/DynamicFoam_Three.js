@@ -7,7 +7,6 @@ import * as THREE from 'three';
  */
 class DelaunayFoam {
     constructor(width, height, numPoints = 100) {
-        // Dimensions
         this.width = width;
         this.height = height;
         this.numPoints = numPoints;
@@ -21,25 +20,19 @@ class DelaunayFoam {
         this.delaunayEdges = [];           // Maps [pointIndex1, pointIndex2] => edgeIndex
         this.voronoiEdges = [];            // Stores from/to triangle centers and the corresponding delaunay edge
         this.triangleAdjacency = [];       // For each triangle, lists adjacent triangles
-        this.flows = [];                   // Particles flowing on Voronoi edges
+        this.foamFlows = [];               // Particles flowing on Voronoi edges
         
         // Center type (circumcenter, barycenter, incenter)
         this.centerType = 'barycenter';
         
         // Dynamics parameters
-        this.flowSpeed = 1.0;              // Speed of particles
-        this.flowStrength = 0.02;          // How much particles contract edges
+        this.flowSpeed = 1.0;              // Increased from 0.5 to 1.0
+        this.flowStrength = 0.02;          // Increased from 0.01 to 0.02
         this.expansionThreshold = 0.5;
         this.contractionFactor = 0.95;
         this.expansionFactor = 1.05;
         this.equilibriumDistance = 50;
         this.restructureThreshold = 0.05;  // Threshold for re-triangulation
-        
-        // Particle management parameters
-        this.particleReleaseInterval = 1.0;  // Time between releasing new particles (in seconds)
-        this.particleLifetime = 5.0;         // How long particles live (in seconds)
-        this.lastReleaseTime = 0;            // Tracks when we last released particles
-        this.maxAngleForTraversal = Math.PI/2; // Maximum angle (90 degrees) for edge traversal
         
         // System stability parameters
         this.maxPointMovement = 10;        // Limit how far a point can move in one step
@@ -48,10 +41,6 @@ class DelaunayFoam {
         // Performance optimization
         this.bufferFrames = 5;             // Only re-triangulate every N frames
         this.frameCount = 0;
-        
-        // Time tracking
-        this.currentTime = 0;
-        this.lastLogTime = 0;
         
         // Initialize points and triangulation
         this.initPoints();
@@ -224,7 +213,7 @@ class DelaunayFoam {
         // Clear existing structures
         this.triangleCenters = [];
         this.voronoiEdges = [];
-        this.flows = [];
+        this.foamFlows = [];
         
         // Calculate centers for each triangle
         for (let i = 0; i < this.delaunay.triangles.length / 3; i++) {
@@ -336,151 +325,17 @@ class DelaunayFoam {
     }
     
     /**
-     * Initialize flows - create initial particles
+     * Initialize flows on Voronoi edges
      */
     initializeFlows() {
-        this.flows = [];
-        // Initial release will happen on first update
-    }
-    
-    /**
-     * Update the simulation
-     */
-    update(deltaTime) {
-        // Create initial particles if they don't exist
-        if (this.flows.length === 0) {
-            this.releaseParticles(0);
-        }
-        
-        // Check if it's time to release more particles
-        this.currentTime += deltaTime;
-        if ((this.currentTime - this.lastReleaseTime) >= this.particleReleaseInterval) {
-            this.releaseParticles(this.currentTime);
-            this.lastReleaseTime = this.currentTime;
-        }
-        
-        // Update existing particles
-        this.updateFlows(deltaTime);
-        
-        // Update Delaunay points based on edge flows
-        const significant = this.updateDelaunayPoints(deltaTime);
-        
-        // Only re-triangulate if points moved significantly or buffer frames reached
-        this.frameCount++;
-        if (significant || this.frameCount >= this.bufferFrames) {
-            this.triangulate();
-            this.createFoam();
-            this.frameCount = 0;
-        }
-    }
-    
-    /**
-     * Update flow particles
-     */
-    updateFlows(deltaTime) {
-        // Update existing particles
-        for (let i = this.flows.length - 1; i >= 0; i--) {
-            const flow = this.flows[i];
-            
-            // Remove expired particles
-            if ((this.currentTime - flow.birthTime) > this.particleLifetime) {
-                this.flows.splice(i, 1);
-                continue;
-            }
-            
-            // Update position
-            const edge = this.voronoiEdges[flow.edgeIndex];
-            
-            // Previous position (to detect crossing)
-            const prevPosition = flow.position;
-            
-            // Update position based on velocity
-            flow.position += flow.velocity * deltaTime;
-            
-            // Check if crossed midpoint (for contraction effect)
-            const crossedMiddle = (prevPosition < 0.5 && flow.position >= 0.5) || 
-                                 (prevPosition >= 0.5 && flow.position < 0.5);
-                                 
-            if (crossedMiddle && edge.delaunayEdge !== undefined) {
-                // Apply contraction to the corresponding Delaunay edge
-                this.delaunayEdges[edge.delaunayEdge].flow += this.flowStrength;
-            }
-            
-            // Check if particle reached the end of the edge
-            if (flow.position <= 0 || flow.position >= 1) {
-                // Remove particle that reached endpoint
-                this.flows.splice(i, 1);
-            }
-        }
-    }
-    
-    /**
-     * Release new particles from edges
-     */
-    releaseParticles(currentTime) {
-        // Ensure we have edges to work with
-        if (!this.voronoiEdges || this.voronoiEdges.length === 0) {
-            return;
-        }
-        
-        // Create particles on all edges
+        this.foamFlows = [];
+        // One particle per edge for clarity
         for (let i = 0; i < this.voronoiEdges.length; i++) {
-            const edge = this.voronoiEdges[i];
-            
-            // Create particles moving in opposite directions
-            // First particle: from middle toward endpoint
-            this.flows.push({
-                edgeIndex: i,
-                position: 0.5,             // Start in the middle of the edge
-                velocity: this.flowSpeed,  // Moving toward 1
-                birthTime: currentTime
+            this.foamFlows.push({
+                position: 0.5, // Start in middle of edge
+                velocity: this.flowSpeed * (Math.random() * 2 - 1), // Random initial velocity
+                edge: i
             });
-            
-            // Second particle: from middle toward startpoint
-            this.flows.push({
-                edgeIndex: i,
-                position: 0.5,              // Start in the middle of the edge
-                velocity: -this.flowSpeed,  // Moving toward 0
-                birthTime: currentTime
-            });
-        }
-    }
-    
-    /**
-     * Update existing particle positions
-     */
-    updateParticlePositions(deltaTime) {
-        // Process particles in reverse order so we can remove expired ones
-        for (let i = this.flows.length - 1; i >= 0; i--) {
-            const flow = this.flows[i];
-            
-            // Remove expired particles
-            if (this.currentTime - flow.birthTime > this.particleLifetime) {
-                this.flows.splice(i, 1);
-                continue;
-            }
-            
-            // Skip invalid particles
-            if (flow.edgeIndex < 0 || flow.edgeIndex >= this.voronoiEdges.length) {
-                this.flows.splice(i, 1);
-                continue;
-            }
-            
-            const edge = this.voronoiEdges[flow.edgeIndex];
-            
-            // Calculate movement along the edge
-            // direction: 1 = toward 'to' vertex, -1 = toward 'from' vertex
-            flow.t += flow.direction * flow.velocity * deltaTime;
-            
-            // Check if particle reached an endpoint
-            if (flow.t <= 0 || flow.t >= 1) {
-                // Particle has reached end of edge - remove it
-                this.flows.splice(i, 1);
-                
-                // Apply contraction at the vertex it reached
-                const vertexIndex = flow.t <= 0 ? edge.from : edge.to;
-                this.applyContraction(vertexIndex);
-            }
         }
     }
     
@@ -496,6 +351,104 @@ class DelaunayFoam {
         while (angle > 2 * Math.PI) angle -= 2 * Math.PI;
         
         return Math.min(angle, 2 * Math.PI - angle);
+    }
+    
+    /**
+     * Updates the simulation by one step
+     */
+    update(deltaTime) {
+        // Update flows along Voronoi edges
+        this.updateFlows(deltaTime);
+        
+        // Transfer flow from Voronoi edges to Delaunay edges
+        this.transferVoronoiFlowToDelaunay();
+        
+        // Update Delaunay points based on edge flows
+        const significant = this.updateDelaunayPoints(deltaTime);
+        
+        // Only re-triangulate if points moved significantly or buffer frames reached
+        this.frameCount++;
+        if (significant || this.frameCount >= this.bufferFrames) {
+            this.triangulate();
+            this.createFoam();
+            this.frameCount = 0;
+        }
+    }
+    
+    /**
+     * Update particle flows along Voronoi edges
+     */
+    updateFlows(deltaTime) {
+        for (let i = 0; i < this.foamFlows.length; i++) {
+            const flow = this.foamFlows[i];
+            const edge = this.voronoiEdges[flow.edge];
+            
+            // Update position
+            flow.position += flow.velocity * deltaTime;
+            
+            // If reached end of edge, move to next edge and contract delaunay edge
+            if (flow.position <= 0 || flow.position >= 1) {
+                // Add flow directly to the corresponding Delaunay edge to contract it
+                if (edge.delaunayEdge !== undefined) {
+                    this.delaunayEdges[edge.delaunayEdge].flow += this.flowStrength;
+                    
+                    // Log for debugging
+                    if (Math.random() < 0.01) { // 1% of events
+                        console.log("Flow added to Delaunay edge:", {
+                            delaunayEdge: edge.delaunayEdge,
+                            flowAmount: this.flowStrength,
+                            totalFlow: this.delaunayEdges[edge.delaunayEdge].flow
+                        });
+                    }
+                }
+                
+                // Determine which vertex we've hit (from or to)
+                const vertex = flow.position <= 0 ? edge.from : edge.to;
+                
+                // Find all Voronoi edges connected to this vertex
+                const connectedEdges = [];
+                for (let j = 0; j < this.voronoiEdges.length; j++) {
+                    if (j !== flow.edge && 
+                        (this.voronoiEdges[j].from === vertex || 
+                         this.voronoiEdges[j].to === vertex)) {
+                        connectedEdges.push(j);
+                    }
+                }
+                
+                if (connectedEdges.length > 0) {
+                    // Pick a random connected edge
+                    const nextEdgeIdx = Math.floor(Math.random() * connectedEdges.length);
+                    const nextEdge = connectedEdges[nextEdgeIdx];
+                    flow.edge = nextEdge;
+                    
+                    // Set position at the correct end of the new edge
+                    const newEdge = this.voronoiEdges[nextEdge];
+                    flow.position = newEdge.from === vertex ? 0 : 1;
+                    
+                    // Adjust velocity direction based on new position
+                    if (flow.position === 0) {
+                        flow.velocity = Math.abs(flow.velocity); // Move from 0 toward 1
+                    } else {
+                        flow.velocity = -Math.abs(flow.velocity); // Move from 1 toward 0
+                    }
+                } else {
+                    // If no connected edges, just bounce
+                    flow.velocity = -flow.velocity;
+                    flow.position = Math.max(0, Math.min(1, flow.position));
+                }
+            }
+        }
+    }
+    
+    /**
+     * We no longer need a separate transfer function since we directly 
+     * affect the Delaunay edges when particles hit edge boundaries
+     */
+    transferVoronoiFlowToDelaunay() {
+        // Simply decay all flows over time for a nice visual effect
+        for (let i = 0; i < this.delaunayEdges.length; i++) {
+            this.delaunayEdges[i].flow *= 0.99; // Slow decay
+        }
     }
     
     /**
@@ -528,16 +481,12 @@ class DelaunayFoam {
             
             const currentDistance = Math.sqrt((p2x - p1x) ** 2 + (p2y - p1y) ** 2);
             
-            // Target distance based on flow
-            let targetDistance = edge.restLength; // Use rest length as base
+            // Target distance based on flow - KEY CHANGE: flow CONTRACTS the Delaunay edge
+            // The more flow, the more contraction
+            let targetDistance = edge.restLength * (1.0 - (edge.flow * 0.2));
             
-            if (edge.flow > this.expansionThreshold) {
-                // Expansion for high flow
-                targetDistance *= this.expansionFactor;
-            } else {
-                // Contraction for normal flow
-                targetDistance *= this.contractionFactor;
-            }
+            // Ensure we don't contract too much
+            targetDistance = Math.max(targetDistance, edge.restLength * 0.5);
             
             // Calculate force
             const factor = (targetDistance / currentDistance - 1) * 0.1;
@@ -555,7 +504,7 @@ class DelaunayFoam {
             maxMovement = Math.max(maxMovement, movementMagnitude);
             
             // Decay flow over time
-            edge.flow *= 0.95;
+            edge.flow *= 0.99;
         }
         
         // Apply movements to points with limits
@@ -584,16 +533,16 @@ class DelaunayFoam {
     }
     
     /**
-     * Get data for rendering
+     * Return the geometry data for Three.js visualization
      */
     getGeometryData() {
         return {
             points: this.points,
             triangles: Array.from(this.delaunay.triangles),
-            delaunayEdges: this.delaunayEdges,
             centers: this.triangleCenters,
             edges: this.voronoiEdges,
-            flows: this.flows
+            flows: this.foamFlows,
+            delaunayEdges: this.delaunayEdges
         };
     }
     
@@ -619,17 +568,6 @@ class DelaunayFoam {
         if (params.contractionFactor !== undefined) this.contractionFactor = params.contractionFactor;
         if (params.expansionFactor !== undefined) this.expansionFactor = params.expansionFactor;
         if (params.equilibriumDistance !== undefined) this.equilibriumDistance = params.equilibriumDistance;
-        if (params.restructureThreshold !== undefined) this.restructureThreshold = params.restructureThreshold;
-        if (params.maxAngleForTraversal !== undefined) this.maxAngleForTraversal = params.maxAngleForTraversal * Math.PI / 180;
-        if (params.particleReleaseInterval !== undefined) this.particleReleaseInterval = params.particleReleaseInterval;
-        if (params.particleLifetime !== undefined) this.particleLifetime = params.particleLifetime;
-        if (params.maxPointMovement !== undefined) this.maxPointMovement = params.maxPointMovement;
-        if (params.boundaryPadding !== undefined) this.boundaryPadding = params.boundaryPadding;
-        if (params.bufferFrames !== undefined) this.bufferFrames = params.bufferFrames;
-        if (params.currentTime !== undefined) this.currentTime = params.currentTime;
-        if (params.lastReleaseTime !== undefined) this.lastReleaseTime = params.lastReleaseTime;
-        if (params.lastLogTime !== undefined) this.lastLogTime = params.lastLogTime;
-        this.createFoam();
     }
     
     /**
@@ -640,24 +578,6 @@ class DelaunayFoam {
         this.initPoints();
         this.triangulate();
         this.createFoam();
-    }
-    
-    /**
-     * Apply contraction effect at a vertex
-     */
-    applyContraction(vertexIndex) {
-        if (vertexIndex < 0 || vertexIndex >= this.triangleCenters.length) {
-            return;
-        }
-        
-        // Contract Delaunay edges connected to this vertex
-        for (let i = 0; i < this.delaunayEdges.length; i++) {
-            const edge = this.delaunayEdges[i];
-            if (edge.from === vertexIndex || edge.to === vertexIndex) {
-                // Apply contraction effect
-                edge.flow += this.flowStrength * 0.5;
-            }
-        }
     }
 }
 

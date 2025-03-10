@@ -22,11 +22,9 @@ class UIController {
             equilibriumDistance: foam.equilibriumDistance,
             
             // Visualization parameters
-            showDelaunayEdges: true,     // The backbone of our model
-            showFoamEdges: true,         // Voronoi edges
-            showFlowParticles: true,     // Flow particles
-            showAcuteCorners: true,
-            darkMode: true,
+            showDelaunayEdges: true,    // Show Delaunay edges (backbone)
+            showFoamEdges: true,        // Voronoi edges
+            showFlowParticles: true,    // Flow particles
             
             // Actions
             isRunning: true,
@@ -49,7 +47,6 @@ class UIController {
         const simulationFolder = this.gui.addFolder('Simulation');
         const centerTypeFolder = simulationFolder.addFolder('Center Type');
         const dynamicsFolder = simulationFolder.addFolder('Dynamics');
-        const particleSettingsFolder = this.gui.addFolder('Particle Settings');
         const visualizationFolder = this.gui.addFolder('Visualization');
         const actionsFolder = this.gui.addFolder('Actions');
         
@@ -101,26 +98,11 @@ class UIController {
             .onChange(value => {
                 this.foam.setDynamicsParams({ equilibriumDistance: value });
             });
-            
-        // Particle settings
-        particleSettingsFolder.add(this.foam, 'particleReleaseInterval', 0.1, 2.0, 0.1)
-            .name('Release Interval (s)');
-            
-        particleSettingsFolder.add(this.foam, 'particleLifetime', 0.5, 5.0, 0.5)
-            .name('Particle Lifetime (s)');
-            
-        particleSettingsFolder.add(this.foam, 'maxAngleForTraversal', 0, Math.PI, 0.1)
-            .name('Max Angle (rad)')
-            .onChange(value => {
-                // Clamp between 0 and Pi (0-180 degrees)
-                this.foam.maxAngleForTraversal = Math.max(0, Math.min(Math.PI, value));
-            });
         
         // Visualization parameters
         visualizationFolder.add(this.params, 'showDelaunayEdges')
             .name('Show Delaunay Edges')
             .onChange(value => {
-                // Only show Delaunay edges, not triangulation
                 this.renderer.setVisibility({ showDelaunayEdges: value });
             });
         
@@ -136,23 +118,11 @@ class UIController {
                 this.renderer.setVisibility({ showFlowParticles: value });
             });
         
-        visualizationFolder.add(this.params, 'showAcuteCorners')
-            .name('Show Acute Corners')
-            .onChange(value => {
-                this.renderer.setVisibility({ showAcuteCorners: value });
-            });
-        
-        visualizationFolder.add(this.params, 'darkMode')
-            .name('Dark Mode')
-            .onChange(value => {
-                this.renderer.setDarkMode(value);
-            });
-        
         // Color controls
         const colorParams = {
             backgroundColor: '#111111',
             delaunayEdgesColor: '#7a7a7a',
-            voronoiMeshColor: '#2288ff',
+            foamEdgesColor: '#2288ff',
             flowParticlesColor: '#ff8822'
         };
         
@@ -170,7 +140,7 @@ class UIController {
                 this.renderer.setColors({ delaunayLines: value });
             });
         
-        colorFolder.addColor(colorParams, 'voronoiMeshColor')
+        colorFolder.addColor(colorParams, 'foamEdgesColor')
             .name('Voronoi Mesh')
             .onChange(value => {
                 this.renderer.setColors({ foamLines: value });
@@ -190,7 +160,6 @@ class UIController {
         // Open folders by default
         simulationFolder.open();
         dynamicsFolder.open();
-        particleSettingsFolder.open();
         visualizationFolder.open();
         actionsFolder.open();
     }
