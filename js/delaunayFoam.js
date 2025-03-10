@@ -329,7 +329,8 @@ class DelaunayFoam {
      */
     initializeFlows() {
         this.foamFlows = [];
-        // One particle per edge for clarity
+        
+        // One flow particle per edge
         for (let i = 0; i < this.voronoiEdges.length; i++) {
             this.foamFlows.push({
                 position: 0.5, // Start in middle of edge
@@ -383,24 +384,28 @@ class DelaunayFoam {
             const flow = this.foamFlows[i];
             const edge = this.voronoiEdges[flow.edge];
             
+            // Previous position (to detect crossing an edge)
+            const prevPosition = flow.position;
+            
             // Update position
             flow.position += flow.velocity * deltaTime;
             
-            // If reached end of edge, move to next edge and contract delaunay edge
+            // Check if particle crosses or hits the Delaunay edge
+            const crossedMiddle = (prevPosition < 0.5 && flow.position >= 0.5) || 
+                                  (prevPosition >= 0.5 && flow.position < 0.5);
+                                  
+            if (crossedMiddle && edge.delaunayEdge !== undefined) {
+                // Apply contraction to the corresponding Delaunay edge when crossing
+                this.delaunayEdges[edge.delaunayEdge].flow += this.flowStrength * 2;
+                
+                // Visual feedback that we're affecting the Delaunay edge
+                edge.flow += this.flowStrength * 0.5;
+            }
+            
+            // If reached end of edge, move to next edge
             if (flow.position <= 0 || flow.position >= 1) {
-                // Add flow directly to the corresponding Delaunay edge to contract it
-                if (edge.delaunayEdge !== undefined) {
-                    this.delaunayEdges[edge.delaunayEdge].flow += this.flowStrength;
-                    
-                    // Log for debugging
-                    if (Math.random() < 0.01) { // 1% of events
-                        console.log("Flow added to Delaunay edge:", {
-                            delaunayEdge: edge.delaunayEdge,
-                            flowAmount: this.flowStrength,
-                            totalFlow: this.delaunayEdges[edge.delaunayEdge].flow
-                        });
-                    }
-                }
+                // Add flow to current edge when reaching an endpoint
+                edge.flow += this.flowStrength;
                 
                 // Determine which vertex we've hit (from or to)
                 const vertex = flow.position <= 0 ? edge.from : edge.to;
@@ -432,7 +437,7 @@ class DelaunayFoam {
                         flow.velocity = -Math.abs(flow.velocity); // Move from 1 toward 0
                     }
                 } else {
-                    // If no connected edges, just bounce
+                    // If no connected edges (shouldn't happen in proper mesh), just bounce
                     flow.velocity = -flow.velocity;
                     flow.position = Math.max(0, Math.min(1, flow.position));
                 }
@@ -441,13 +446,21 @@ class DelaunayFoam {
     }
     
     /**
-     * We no longer need a separate transfer function since we directly 
-     * affect the Delaunay edges when particles hit edge boundaries
+     * Transfer flow from Voronoi edges to their corresponding Delaunay edges
+     * This is primarily for decaying flows and handling any remaining flow transfer
      */
     transferVoronoiFlowToDelaunay() {
-        // Simply decay all flows over time for a nice visual effect
+        // Decay flows over time but maintain minimal flow for visualization
+        for (let i = 0; i < this.voronoiEdges.length; i++) {
+            if (this.voronoiEdges[i].flow > 0) {
+                this.voronoiEdges[i].flow *= 0.95;
+            }
+        }
+        
         for (let i = 0; i < this.delaunayEdges.length; i++) {
-            this.delaunayEdges[i].flow *= 0.99; // Slow decay
+            if (this.delaunayEdges[i].flow > 0) {
+                this.delaunayEdges[i].flow *= 0.98;
+            }
         }
     }
     
@@ -481,12 +494,16 @@ class DelaunayFoam {
             
             const currentDistance = Math.sqrt((p2x - p1x) ** 2 + (p2y - p1y) ** 2);
             
-            // Target distance based on flow - KEY CHANGE: flow CONTRACTS the Delaunay edge
-            // The more flow, the more contraction
-            let targetDistance = edge.restLength * (1.0 - (edge.flow * 0.2));
+            // Target distance based on flow
+            let targetDistance = edge.restLength; // Use rest length as base
             
-            // Ensure we don't contract too much
-            targetDistance = Math.max(targetDistance, edge.restLength * 0.5);
+            if (edge.flow > this.expansionThreshold) {
+                // Expansion for high flow
+                targetDistance *= this.expansionFactor;
+            } else {
+                // Contraction for normal flow
+                targetDistance *= this.contractionFactor;
+            }
             
             // Calculate force
             const factor = (targetDistance / currentDistance - 1) * 0.1;
@@ -504,7 +521,7 @@ class DelaunayFoam {
             maxMovement = Math.max(maxMovement, movementMagnitude);
             
             // Decay flow over time
-            edge.flow *= 0.99;
+            edge.flow *= 0.95;
         }
         
         // Apply movements to points with limits

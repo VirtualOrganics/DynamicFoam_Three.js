@@ -108,14 +108,13 @@ class FoamRenderer {
         // Remove previous objects
         if (this.triangles) {
             this.scene.remove(this.triangles);
-            this.triangles = null; // No longer needed
+            this.triangles = null; // Set to null to ensure it's not referenced
         }
         if (this.foamLines) this.scene.remove(this.foamLines);
         if (this.flowParticles) this.scene.remove(this.flowParticles);
         if (this.delaunayLines) this.scene.remove(this.delaunayLines);
         
-        // We no longer create triangulation visualization
-        // Only create Delaunay edges
+        // Create delaunay edges visualization
         this.createDelaunayEdges(foamData.points, foamData.delaunayEdges);
         
         // Create foam edges (Voronoi)
@@ -123,6 +122,25 @@ class FoamRenderer {
         
         // Create flow particles
         this.createFlowParticles(foamData.centers, foamData.edges, foamData.flows);
+    }
+    
+    /**
+     * Create visualization of the Delaunay triangulation
+     */
+    createTriangulation(points, triangles) {
+        const geometry = new THREE.BufferGeometry();
+        
+        // Convert points to Vector3 array for Three.js
+        const vertices = [];
+        for (let i = 0; i < points.length; i += 2) {
+            vertices.push(points[i], points[i + 1], 0);
+        }
+        
+        geometry.setIndex(triangles);
+        geometry.setAttribute('position', new THREE.Float32BufferAttribute(vertices, 3));
+        
+        this.triangles = new THREE.Mesh(geometry, this.triangleMaterial);
+        this.scene.add(this.triangles);
     }
     
     /**
@@ -410,9 +428,8 @@ class FoamRenderer {
      * Toggle visibility of different components
      */
     setVisibility(options) {
-        // We no longer have triangulation, only Delaunay edges
-        if (this.delaunayLines && options.showDelaunayEdges !== undefined) {
-            this.delaunayLines.visible = options.showDelaunayEdges;
+        if (this.triangles && options.showTriangulation !== undefined) {
+            this.triangles.visible = options.showTriangulation;
         }
         
         if (this.foamLines && options.showFoamEdges !== undefined) {
@@ -421,6 +438,10 @@ class FoamRenderer {
         
         if (this.flowParticles && options.showFlowParticles !== undefined) {
             this.flowParticles.visible = options.showFlowParticles;
+        }
+        
+        if (this.delaunayLines && options.showDelaunayEdges !== undefined) {
+            this.delaunayLines.visible = options.showDelaunayEdges;
         }
     }
 }
